@@ -37,7 +37,7 @@ func main() {
     }
 
     // run migration table
-    err = db.AutoMigrate(&models.User{}, &models.Transaction{})
+    err = db.AutoMigrate(&)
     if err != nil {
         log.Fatal("failed to automigrate: ", err)
     }

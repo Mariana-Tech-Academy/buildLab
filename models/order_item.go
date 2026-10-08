@@ -1,13 +1,16 @@
-package models 
+package models
+
+import (
+	"gorm.io/gorm"
+)
+
 type OrderItem struct {
 	gorm.Model
-ID unit
-OrderID uint
-MenuItemID uint
-Name string
-Quantity int
-CreatedAt time.Time
-MenuItem *MenuItem
-Total    int64
 
+	OrderID    uint
+	MenuItemID uint
+	Name       string
+	Quantity   int
+	MenuItem   *MenuItem
+	Total      int64
 }

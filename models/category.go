@@ -1,4 +1,6 @@
-package models 
+package models
+
+import "gorm.io/gorm"
 
 type MenuItem struct {
 	gorm.Model
@@ -10,4 +12,3 @@ type MenuItem struct {
 	RestaurantID int
 	CategoryID   int
 }
-

@@ -1,7 +1,8 @@
-package models 
+package models
 
+import "gorm.io/gorm"
 
-type MenuItem struct {
+type CartItem struct {
 	gorm.Model
 	ID           int
 	Name         string
