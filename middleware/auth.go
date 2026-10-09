@@ -1,71 +1,50 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
-	"os"
+	"slices"
 	"strings"
-	"time"
 
-	"github.com/golang-jwt/jwt"
+	"Fhub/auth"
+	"Fhub/models"
+	"Fhub/utils"
 )
 
-func AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// Authenticate rejects requests without a valid bearer token and stores the claims in the request context.
+func Authenticate(tokens *auth.JWTManager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tokenString, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if !ok || tokenString == "" {
+				utils.Error(w, http.StatusUnauthorized, "missing or malformed authorization header")
+				return
+			}
 
-		tokenString := r.Header.Get("Authorization")
+			claims, err := tokens.Verify(tokenString)
+			if err != nil {
+				utils.Error(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
 
-		if tokenString == "" {
-			http.Error(w, "missing token", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
-
-		_, err := VerifyJWT(tokenString)
-
-		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
+		})
+	}
 }
 
-
-func GenerateJWT(userID string) (string, error) {
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"userID": userID,
-		"exp":    time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	jwtSecret := os.Getenv("JWT_SECRET")
-
-	return token.SignedString([]byte(jwtSecret))
-}
-
-func VerifyJWT(tokenString string) (*jwt.Token, error) {
-
-	jwtSecret := os.Getenv("JWT_SECRET")
-
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header)
-		}
-
-		return []byte(jwtSecret), nil
-	})
-
-	if err != nil {
-		return nil, err
+// RequireRole must be used after Authenticate.
+func RequireRole(roles ...models.Role) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, err := auth.ClaimsFromContext(r.Context())
+			if err != nil {
+				utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+				return
+			}
+			if !slices.Contains(roles, claims.Role) {
+				utils.Error(w, http.StatusForbidden, "you do not have permission to perform this action")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
-
-	if !token.Valid {
-		return nil, fmt.Errorf("invalid token")
-	}
-
-	return token, nil
 }

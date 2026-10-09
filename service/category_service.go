@@ -2,11 +2,13 @@ package service
 
 import "Fhub/repository"
 
-type CategoryService struct {
-	CategoryRepo repository.CategoryRepository
+type CategoryService interface {
 }
 
-func NewCategoryService(repo repository.CategoryRepository) *CategoryService {
-	return &CategoryService{CategoryRepo: repo}
+type categoryService struct {
+	categoryRepo repository.CategoryRepository
+}
 
+func NewCategoryService(repo repository.CategoryRepository) CategoryService {
+	return &categoryService{categoryRepo: repo}
 }

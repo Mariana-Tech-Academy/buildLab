@@ -6,8 +6,7 @@ type CartHandler struct {
 	CartService service.CartService
 }
 
-
-func NewCartHandler( service service.CartService) *CartHandler {
-      return &CartHandler{CartService:service}
+func NewCartHandler(service service.CartService) *CartHandler {
+	return &CartHandler{CartService: service}
 
 }

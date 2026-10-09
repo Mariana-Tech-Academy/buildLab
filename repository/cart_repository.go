@@ -9,6 +9,6 @@ type PostgresCartRepo struct {
 	db *gorm.DB
 }
 
-func NewCartRepository(db *gorm.DB) AdminRepository {
-	return &PostgresAdminRepo{db: db}
+func NewCartRepository(db *gorm.DB) CartRepository {
+	return &PostgresCartRepo{db: db}
 }

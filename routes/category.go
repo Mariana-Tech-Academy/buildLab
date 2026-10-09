@@ -1,7 +1,10 @@
 package routes
 
 import (
+	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
+	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -9,16 +12,16 @@ import (
 	"gorm.io/gorm"
 )
 
-func CategoryRoutes(router *mux.Router, db *gorm.DB) {
+func CategoryRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	repo := repository.NewCategoryRepository(db)
-
 	categoryService := service.NewCategoryService(repo)
+	categoryHandler := handlers.NewCategoryHandler(categoryService)
 
-	categoryHandler := handlers.NewCategoryHandler(*categoryService)
+	// public routes: GET /categories
 
-	// define public routes
+	// admin routes: POST /categories, PUT /categories/{id}, DELETE /categories/{id}
+	admin := protected(router, tokens)
+	admin.Use(middleware.RequireRole(models.RoleAdmin))
 
-	// define protected routes
-
-	_ = categoryHandler
+	_, _ = categoryHandler, admin
 }

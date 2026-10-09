@@ -1,7 +1,10 @@
 package routes
 
 import (
+	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
+	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -9,14 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func AdminRoutes(router *mux.Router, db *gorm.DB) {
+func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	repo := repository.NewAdminRepository(db)
-
 	adminService := service.NewAdminService(repo)
+	adminHandler := handlers.NewAdminHandler(adminService)
 
-	adminHandler := handlers.NewAdminHandler(*adminService)
+	// admin routes: GET /admin/users, GET /admin/restaurants, GET /admin/orders, GET /admin/statistics, ...
+	admin := router.PathPrefix("/admin").Subrouter()
+	admin.Use(middleware.Authenticate(tokens), middleware.RequireRole(models.RoleAdmin))
 
-	// define protected routes
-
-	_ = adminHandler
+	_, _ = adminHandler, admin
 }

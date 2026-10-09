@@ -1,12 +1,18 @@
 package service
 
-import "Fhub/repository"
+import (
+	"Fhub/auth"
+	"Fhub/repository"
+)
 
-type UserService struct {
-	UserRepo repository.UserRepository
+type UserService interface {
 }
 
-func NewUserService(repo repository.UserRepository) *UserService {
-	return &UserService{UserRepo: repo}
+type userService struct {
+	userRepo repository.UserRepository
+	tokens   *auth.JWTManager
+}
 
+func NewUserService(repo repository.UserRepository, tokens *auth.JWTManager) UserService {
+	return &userService{userRepo: repo, tokens: tokens}
 }

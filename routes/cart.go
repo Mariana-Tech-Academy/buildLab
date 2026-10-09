@@ -1,7 +1,10 @@
 package routes
 
 import (
+	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
+	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -9,16 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func CartRoutes(router *mux.Router, db *gorm.DB) {
+func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	repo := repository.NewCartRepository(db)
-
 	cartService := service.NewCartService(repo)
+	cartHandler := handlers.NewCartHandler(cartService)
 
-	cartHandler := handlers.NewCartHandler(*cartService)
+	// customer routes: GET /cart, POST /cart/items, PUT /cart/items/{id}, DELETE /cart/items/{id}, DELETE /cart
+	customer := protected(router, tokens)
+	customer.Use(middleware.RequireRole(models.RoleCustomer))
 
-	// define public routes
-
-	// define protected routes
-
-	_ = cartHandler
+	_, _ = cartHandler, customer
 }

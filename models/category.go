@@ -2,13 +2,8 @@ package models
 
 import "gorm.io/gorm"
 
-type MenuItem struct {
+type Category struct {
 	gorm.Model
-	Name         string
-	Description  string
-	Price        float64
-	ImageURL     string
-	Available    bool
-	RestaurantID int
-	CategoryID   int
+	Name      string     `gorm:"uniqueIndex;not null" json:"name"`
+	MenuItems []MenuItem `json:"menu_items,omitempty"`
 }

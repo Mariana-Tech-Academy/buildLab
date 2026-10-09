@@ -2,10 +2,13 @@ package service
 
 import "Fhub/repository"
 
-type MenuService struct {
-	MenuRepo repository.MenuRepository
+type MenuService interface {
 }
 
-func NewMenuService(repo repository.MenuRepository) *MenuService {
-	return &MenuService{MenuRepo: repo}
+type menuService struct {
+	menuRepo repository.MenuRepository
+}
+
+func NewMenuService(repo repository.MenuRepository) MenuService {
+	return &menuService{menuRepo: repo}
 }

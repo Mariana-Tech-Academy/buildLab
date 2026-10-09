@@ -6,8 +6,7 @@ type AdminHandler struct {
 	AdminService service.AdminService
 }
 
-
-func  NewAdminHandler( service  service.AdminService) *AdminHandler {
-      return &AdminHandler{AdminService:service}
+func NewAdminHandler(service service.AdminService) *AdminHandler {
+	return &AdminHandler{AdminService: service}
 
 }

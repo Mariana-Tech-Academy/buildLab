@@ -1,7 +1,10 @@
 package routes
 
 import (
+	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
+	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -9,16 +12,22 @@ import (
 	"gorm.io/gorm"
 )
 
-func OrderRoutes(router *mux.Router, db *gorm.DB) {
+func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	repo := repository.NewOrderRepository(db)
-
 	orderService := service.NewOrderService(repo)
+	orderHandler := handlers.NewOrderHandler(orderService)
 
-	orderHandler := handlers.NewOrderHandler(*orderService)
+	// customer routes: POST /orders (checkout)
+	customer := protected(router, tokens)
+	customer.Use(middleware.RequireRole(models.RoleCustomer))
 
-	// define public routes
+	// authenticated routes: GET /orders, GET /orders/{id}
+	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
+	authed := protected(router, tokens)
 
-	// define protected routes
+	// manager/admin routes: PATCH /orders/{id}/status
+	staff := protected(router, tokens)
+	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_ = orderHandler
+	_, _, _, _ = orderHandler, customer, authed, staff
 }

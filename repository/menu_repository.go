@@ -1,4 +1,4 @@
-package repository 
+package repository
 
 import "gorm.io/gorm"
 
@@ -12,6 +12,3 @@ type PostgresMenuRepo struct {
 func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &PostgresMenuRepo{db: db}
 }
-
-
-

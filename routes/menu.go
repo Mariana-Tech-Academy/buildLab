@@ -1,6 +1,10 @@
 package routes
+
 import (
+	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
+	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -8,16 +12,17 @@ import (
 	"gorm.io/gorm"
 )
 
-func MenuRoutes(router *mux.Router, db *gorm.DB) {
+func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	repo := repository.NewMenuRepository(db)
-
 	menuService := service.NewMenuService(repo)
+	menuHandler := handlers.NewMenuHandler(menuService)
 
-	menuHandler := handlers.NewMenuHandler(*menuService)
+	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
 
-	// define public routes
+	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
+	// The service must also check the item belongs to the calling manager's restaurant.
+	manager := protected(router, tokens)
+	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	// define protected routes
-
-	_ = menuHandler
+	_, _ = menuHandler, manager
 }
