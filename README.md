@@ -69,3 +69,6 @@ _TODO: backend URL, frontend URL._
 ## Team
 
 _TODO_
+
+
+Logout behaviour: The frontend discards the JWT when the user logs out. The backend does not invalidate the token; it remains valid until it expires. Protected endpoints continue to require a valid JWT.
