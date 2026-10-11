@@ -1,8 +1,13 @@
 package repository
 
-import "gorm.io/gorm"
+import (
+	"Fhub/models"
+
+	"gorm.io/gorm"
+)
 
 type UserRepository interface {
+	FindByEmail(email string) (*models.User, error)
 }
 
 type PostgresUserRepo struct {
@@ -11,4 +16,13 @@ type PostgresUserRepo struct {
 
 func NewUserRepository(db *gorm.DB) UserRepository {
 	return &PostgresUserRepo{db: db}
+}
+
+func (r *PostgresUserRepo) FindByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

@@ -2,10 +2,36 @@ package service
 
 import (
 	"Fhub/auth"
+	"Fhub/models"
 	"Fhub/repository"
+	"Fhub/utils"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
 )
 
+var (
+	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrAccountSuspended   = errors.New("your account is suspeneded")
+)
+
+type LoginUser struct {
+	ID        uint        `json:"id"`
+	FirstName string      `json:"first_name"`
+	LastName  string      `json:"last_name"`
+	Email     string      `json:"email"`
+	Role      models.Role `json:"role"`
+}
+
+type LoginResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	User      LoginUser `json:"user"`
+}
+
 type UserService interface {
+	Login(email, password string) (*LoginResponse, error)
 }
 
 type userService struct {
@@ -15,4 +41,44 @@ type userService struct {
 
 func NewUserService(repo repository.UserRepository, tokens *auth.JWTManager) UserService {
 	return &userService{userRepo: repo, tokens: tokens}
+}
+
+func (s *userService) Login(email, password string) (*LoginResponse, error) {
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, err
+	}
+
+	if !utils.CheckPassword(user.Password, password) {
+		return nil, ErrInvalidCredentials
+
+	}
+	if user.Status == models.UserStatusSuspended {
+		return nil, ErrAccountSuspended
+	}
+
+	token, err := s.tokens.Generate(user.ID, user.Role)
+	if err != nil {
+		return nil, err
+	}
+
+	claims, err := s.tokens.Verify(token)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LoginResponse{
+		Token:     token,
+		ExpiresAt: claims.ExpiresAt.Time,
+		User: LoginUser{
+			ID:        user.ID,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			Email:     user.Email,
+			Role:      user.Role,
+		},
+	}, nil
 }
