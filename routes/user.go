@@ -7,7 +7,6 @@ import (
 	"Fhub/handlers"
 	"Fhub/repository"
 	"Fhub/service"
-	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
