@@ -3,6 +3,7 @@ package routes
 import (
 	"Fhub/auth"
 	"Fhub/handlers"
+	"Fhub/middleware"
 	"Fhub/repository"
 	"Fhub/service"
 
@@ -10,17 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
+func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewUserRepository(db)
 	userService := service.NewUserService(repo, tokens)
-	userHandler := handlers.NewUserHandler(userService)
+	userHandler := handlers.NewUserHandler(userService, tokens, blacklist)
 
-	// public routes: POST /auth/register, POST /auth/login
-	public := router.PathPrefix("/auth").Subrouter()
-
-	// protected routes: POST /auth/logout, GET /auth/me, PUT /users/me, PUT /users/me/password
-	authed := protected(router, tokens)
+	// Protected routes: GET /auth/me, POST /auth/logout
+	authed := protected(router, tokens, blacklist)
 	authed.HandleFunc("/auth/me", userHandler.GetMe).Methods("GET")
-
-	_, _, _ = userHandler, public, authed
+	authed.HandleFunc("/auth/logout", userHandler.Logout).Methods("POST")
 }

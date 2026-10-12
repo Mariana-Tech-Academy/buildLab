@@ -25,3 +25,4 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
