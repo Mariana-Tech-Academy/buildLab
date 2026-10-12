@@ -69,19 +69,3 @@ _TODO: backend URL, frontend URL._
 ## Team
 
 _TODO_
-
-
-
-
-http://localhost:8080/api/auth/login
-
-
-
-
-http://localhost:8080/api/users/me
-
-{
-  "first_name": "Jane",
-  "last_name": "Smith",
-  "phone": "07123456789"
-}

@@ -3,10 +3,10 @@ package handlers
 import "Fhub/service"
 
 type RestaurantHandler struct {
-	RestaurantService service.RestaurantService
+	RestaurantService *service.RestaurantService
 }
 
-func NewRestaurantHandler(service service.RestaurantService) *RestaurantHandler {
+func NewRestaurantHandler(service *service.RestaurantService) *RestaurantHandler {
 	return &RestaurantHandler{RestaurantService: service}
 
 }

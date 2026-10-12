@@ -2,13 +2,10 @@ package service
 
 import "Fhub/repository"
 
-type OrderService interface {
-}
-
-type orderService struct {
+type OrderService struct {
 	orderRepo repository.OrderRepository
 }
 
-func NewOrderService(repo repository.OrderRepository) OrderService {
-	return &orderService{orderRepo: repo}
+func NewOrderService(repo repository.OrderRepository) *OrderService {
+	return &OrderService{orderRepo: repo}
 }

@@ -3,10 +3,10 @@ package handlers
 import "Fhub/service"
 
 type CartHandler struct {
-	CartService service.CartService
+	CartService *service.CartService
 }
 
-func NewCartHandler(service service.CartService) *CartHandler {
+func NewCartHandler(service *service.CartService) *CartHandler {
 	return &CartHandler{CartService: service}
 
 }
