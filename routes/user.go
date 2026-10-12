@@ -7,6 +7,7 @@ import (
 	"Fhub/handlers"
 	"Fhub/repository"
 	"Fhub/service"
+	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -24,6 +25,10 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	authed := protected(router, tokens)
 	authed.HandleFunc("/auth/me", userHandler.GetMe).Methods(http.MethodGet)
 	authed.HandleFunc("/users/me", userHandler.UpdateProfile).Methods(http.MethodPut)
+	authed.HandleFunc("/auth/test", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("You are authenticated!"))
+
+	}).Methods(http.MethodGet)
 
 	_ = public
 }
