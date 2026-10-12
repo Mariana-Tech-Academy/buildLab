@@ -23,7 +23,7 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	authed := protected(router, tokens)
 	authed.HandleFunc("/auth/test", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("You are authenticated!"))
-	
+
 	}).Methods(http.MethodGet)
 
 	_, _, _ = userHandler, public, authed
