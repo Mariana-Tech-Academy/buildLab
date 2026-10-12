@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -18,6 +20,11 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 
 	// Protected routes: GET /auth/me, POST /auth/logout
 	authed := protected(router, tokens, blacklist)
+
 	authed.HandleFunc("/auth/me", userHandler.GetMe).Methods("GET")
 	authed.HandleFunc("/auth/logout", userHandler.Logout).Methods("POST")
+
+	authed.HandleFunc("/auth/test", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("You are authenticated!"))
+	}).Methods(http.MethodGet)
 }
