@@ -2,10 +2,13 @@ package service
 
 import "Fhub/repository"
 
-type AdminService struct {
+type AdminService interface {
+}
+
+type adminService struct {
 	adminRepo repository.AdminRepository
 }
 
-func NewAdminService(repo repository.AdminRepository) *AdminService {
-	return &AdminService{adminRepo: repo}
+func NewAdminService(repo repository.AdminRepository) AdminService {
+	return &adminService{adminRepo: repo}
 }

@@ -18,16 +18,21 @@ var (
 	ErrValidation   = errors.New("validation failed")
 )
 
-type UserService struct {
+type UserService interface {
+	GetUserByID(ctx context.Context, id uint) (*models.User, error)
+	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
+}
+
+type userService struct {
 	userRepo repository.UserRepository
 	tokens   *auth.JWTManager
 }
 
-func NewUserService(repo repository.UserRepository, tokens *auth.JWTManager) *UserService {
-	return &UserService{userRepo: repo, tokens: tokens}
+func NewUserService(repo repository.UserRepository, tokens *auth.JWTManager) UserService {
+	return &userService{userRepo: repo, tokens: tokens}
 }
 
-func (s *UserService) GetUserByID(ctx context.Context, id uint) (*models.User, error) {
+func (s *userService) GetUserByID(ctx context.Context, id uint) (*models.User, error) {
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrUserNotFound
@@ -35,7 +40,7 @@ func (s *UserService) GetUserByID(ctx context.Context, id uint) (*models.User, e
 	return user, err
 }
 
-func (s *UserService) UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error) {
+func (s *userService) UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error) {
 	firstName = strings.TrimSpace(firstName)
 	lastName = strings.TrimSpace(lastName)
 	phone = strings.TrimSpace(phone)
