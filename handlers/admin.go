@@ -1,6 +1,11 @@
 package handlers
 
-import "Fhub/service"
+import (
+	"Fhub/auth"
+	"Fhub/service"
+	"fmt"
+	"net/http"
+)
 
 type AdminHandler struct {
 	AdminService service.AdminService
@@ -9,4 +14,16 @@ type AdminHandler struct {
 func NewAdminHandler(service service.AdminService) *AdminHandler {
 	return &AdminHandler{AdminService: service}
 
+}
+
+func (h *AdminHandler) TestAdmin(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		http.Error(w, "UnathoriZed", http.StatusUnauthorized)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	fmt.Fprintf(w, "Welcome Admin! Your User ID is %d and your role is %s", claims.UserID, claims.Role,)
 }
