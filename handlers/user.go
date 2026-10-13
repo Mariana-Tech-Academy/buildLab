@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"Fhub/auth"
+	"Fhub/middleware"
 	"Fhub/models"
 	"Fhub/service"
 	"Fhub/utils"
@@ -14,10 +16,16 @@ import (
 
 type UserHandler struct {
 	UserService service.UserService
+	Tokens      *auth.JWTManager
+	Blacklist   *middleware.TokenBlacklist
 }
 
-func NewUserHandler(userService service.UserService) *UserHandler {
-	return &UserHandler{UserService: userService}
+func NewUserHandler(userService service.UserService, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) *UserHandler {
+	return &UserHandler{
+		UserService: userService,
+		Tokens:      tokens,
+		Blacklist:   blacklist,
+	}
 }
 
 type UserResponse struct {
@@ -84,6 +92,40 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.Success(w, http.StatusOK, "Profile updated successfully", newUserResponse(user))
+}
+
+func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	tokenString, ok := strings.CutPrefix(
+		r.Header.Get("Authorization"),
+		"Bearer ",
+	)
+	if !ok || tokenString == "" {
+		utils.Error(
+			w,
+			http.StatusUnauthorized,
+			"missing or malformed authorization header",
+		)
+		return
+	}
+
+	claims, err := h.Tokens.Verify(tokenString)
+	if err != nil {
+		utils.Error(
+			w,
+			http.StatusUnauthorized,
+			"invalid or expired token",
+		)
+		return
+	}
+
+	if claims.ExpiresAt == nil {
+		utils.Error(w, http.StatusUnauthorized, "token expiry missing")
+		return
+	}
+
+	h.Blacklist.Revoke(tokenString, claims.ExpiresAt.Time)
+
+	utils.Success(w, http.StatusOK, "Logged out successfully", nil)
 }
 
 func writeUserError(w http.ResponseWriter, err error) {
