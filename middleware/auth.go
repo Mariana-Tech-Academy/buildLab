@@ -22,11 +22,19 @@ func NewTokenBlacklist() *TokenBlacklist {
 }
 
 func (b *TokenBlacklist) Revoke(token string, expiresAt time.Time) {
-	if !time.Now().Before(expiresAt) {
+	now := time.Now()
+	if !now.Before(expiresAt) {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Most revoked tokens are never sent again, so IsRevoked alone would never remove them.
+	for t, exp := range b.tokens {
+		if !now.Before(exp) {
+			delete(b.tokens, t)
+		}
+	}
 	b.tokens[token] = expiresAt
 }
 

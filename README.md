@@ -70,5 +70,10 @@ _TODO: backend URL, frontend URL._
 
 _TODO_
 
+## Logout behaviour
 
-Logout behaviour: The frontend discards the JWT when the user logs out. The backend does not invalidate the token; it remains valid until it expires. Protected endpoints continue to require a valid JWT.
+`POST /api/auth/logout` adds the caller's token to a blacklist, and every protected endpoint rejects
+blacklisted tokens until they expire. The frontend should also discard the token.
+
+The blacklist is kept in memory, so after a server restart or redeploy, logged-out tokens are
+accepted again until they expire. It is also not shared between multiple server instances.

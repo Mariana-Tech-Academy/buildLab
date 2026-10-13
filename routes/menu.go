@@ -26,4 +26,3 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 
 	_, _ = menuHandler, manager
 }
-
