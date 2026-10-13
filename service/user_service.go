@@ -9,6 +9,7 @@ import (
 	"Fhub/auth"
 	"Fhub/models"
 	"Fhub/repository"
+	"Fhub/utils"
 
 	"gorm.io/gorm"
 )
@@ -16,11 +17,13 @@ import (
 var (
 	ErrUserNotFound = errors.New("user not found")
 	ErrValidation   = errors.New("validation failed")
+	ErrIncorrectPassword = errors.New("incorrect current password")
 )
 
 type UserService interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
+	ChangePassword(ctx context.Context, id uint, currentPassword, newPassword string) error
 }
 
 type userService struct {
@@ -55,3 +58,26 @@ func (s *userService) UpdateProfile(ctx context.Context, id uint, firstName, las
 	}
 	return user, err
 }
+
+func (s *userService) ChangePassword(ctx context.Context, id uint, currentPassword, newPassword string) error {
+    if currentPassword == "" || len(newPassword) < 8 {
+        return ErrValidation
+    }
+
+    user, err := s.GetUserByID(ctx, id)
+    if err != nil {
+        return err
+    }
+
+    if !utils.CheckPassword(user.Password, currentPassword) {
+        return ErrIncorrectPassword
+    }
+
+    newHash, err := utils.HashPassword(newPassword)
+    if err != nil {
+        return err
+    }
+
+    return s.userRepo.UpdatePassword(ctx, id, newHash)
+}
+

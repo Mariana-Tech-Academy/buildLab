@@ -31,3 +31,5 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 
 	_ = public
 }
+
+

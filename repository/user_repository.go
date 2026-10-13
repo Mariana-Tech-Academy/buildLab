@@ -11,6 +11,7 @@ import (
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
+	UpdatePassword(ctx context.Context, id uint, newHash string) error 
 }
 
 type PostgresUserRepo struct {
@@ -33,6 +34,7 @@ func (r *PostgresUserRepo) UpdateProfile(ctx context.Context, id uint, firstName
 	user, err := r.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
+
 	}
 
 	err = r.db.WithContext(ctx).Model(user).Updates(map[string]any{
@@ -45,4 +47,11 @@ func (r *PostgresUserRepo) UpdateProfile(ctx context.Context, id uint, firstName
 	}
 
 	return user, nil
+}
+
+func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash string) error {
+    return r.db.WithContext(ctx).
+        Model(&models.User{}).
+        Where("id = ?", id).
+        Update("password", newHash).Error
 }
