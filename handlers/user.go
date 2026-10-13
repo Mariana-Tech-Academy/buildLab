@@ -19,10 +19,12 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-
 	"Fhub/auth"
 	"Fhub/service"
 	"Fhub/utils"
+
+	
+	
 )
 
 type UserHandler struct {
@@ -86,7 +88,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.UserService.UpdateProfile(
+	user, err := h.UserService.UpdateProfile(    // Call the service layer to update the profile
 		r.Context(),
 		int64(claims.UserID),
 		request.FirstName,
@@ -97,7 +99,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	profile := struct {
+	profile := struct {              // Create a response struct to return the updated profile
 		ID        uint   `json:"id"`
 		FirstName string `json:"first_name"`
 		LastName  string `json:"last_name"`
@@ -105,7 +107,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Phone     string `json:"phone"`
 		Role      string `json:"role"`
 	}{
-		ID:        user.ID,
+		ID:        user.ID,     // Populate the response struct with the updated user data
 		FirstName: user.FirstName,
 		LastName:  user.LastName,
 		Email:     user.Email,
@@ -120,3 +122,11 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		profile,
 	)
 }
+
+
+
+
+
+
+
+

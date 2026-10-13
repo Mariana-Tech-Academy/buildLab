@@ -8,6 +8,8 @@ import (
 	"Fhub/auth"
 	"Fhub/models"
 	"Fhub/utils"
+
+	
 )
 
 // Authenticate rejects requests without a valid bearer token and stores the claims in the request context.
@@ -31,6 +33,9 @@ func Authenticate(tokens *auth.JWTManager) func(http.Handler) http.Handler {
 	}
 }
 
+
+
+
 // RequireRole must be used after Authenticate.
 func RequireRole(roles ...models.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -48,3 +53,10 @@ func RequireRole(roles ...models.Role) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+
+
+
+
+
+

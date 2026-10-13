@@ -23,15 +23,12 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 
 	
 
-	authed.HandleFunc(
-		"/auth/me",
-		userHandler.GetMe,
-	).Methods("GET")
+	authed.HandleFunc("/auth/me",userHandler.GetMe,).Methods("GET")
 
-	authed.HandleFunc(
-		"/users/me",
-		userHandler.UpdateProfile,
-	).Methods("PUT")
+	authed.HandleFunc("/users/me",userHandler.UpdateProfile,).Methods("PUT")
+
+
+
 
 	_, _, _ = userHandler, public, authed
 }

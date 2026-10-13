@@ -45,13 +45,15 @@ func (s *userService) UpdateProfile(
 	lastName = strings.TrimSpace(lastName)
 	phone = strings.TrimSpace(phone)
 
-	if firstName == "" || lastName == "" || phone == "" {
+	if firstName == "" || lastName == "" || phone == "" {   //cannot be empty
 		return nil, errors.New("first name, last name and phone are required")
 	}
+	
 
-	return s.userRepo.UpdateProfile(
-		ctx, id, firstName, lastName, phone,
-	)
+	
+	return s.userRepo.UpdateProfile(   
+		ctx, id, firstName, lastName, phone,)
+
 }
 
    

@@ -35,13 +35,13 @@ func (r *PostgresUserRepo) GetUserByID(id int) (models.User, error) {
 }
 
 func (r *PostgresUserRepo) UpdateProfile(
-	ctx context.Context,
+	ctx context.Context,           //
 	id int64,
 	firstName, lastName, phone string,
-) (*models.User, error) {
+) (*models.User, error) {    // Use context for cancellation and timeouts
 	var user models.User
 	
-	result := r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).   //passed down the content 
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
@@ -54,12 +54,12 @@ func (r *PostgresUserRepo) UpdateProfile(
 		return nil, fmt.Errorf("update profile: %w", result.Error)
 	}
 
-	if result.RowsAffected == 0 {
+	if result.RowsAffected == 0 {    // Check if the user exists
 		var count int64
-		err := r.db.WithContext(ctx).
-			Model(&models.User{}).
+		err := r.db.WithContext(ctx).    // Use WithContext to ensure the context is passed down
+			Model(&models.User{}).      
 			Where("id = ?", id).
-			Count(&count).Error
+			Count(&count).Error 
 
 		if err != nil {
 			return nil, fmt.Errorf("check user: %w", err)
@@ -69,7 +69,7 @@ func (r *PostgresUserRepo) UpdateProfile(
 		}
 	}
 
-	if err := r.db.WithContext(ctx).First(&user, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&user, id).Error; err != nil {     // Fetch the updated user profile
 		return nil, fmt.Errorf("fetch updated profile: %w", err)
 	}
 
