@@ -13,6 +13,14 @@ import (
 
 func Router(db *gorm.DB, tokens *auth.JWTManager) *mux.Router {
 	r := mux.NewRouter()
+	
+r.PathPrefix("/uploads/").Handler(
+    http.StripPrefix(
+        "/uploads/",
+        http.FileServer(http.Dir("./uploads")),
+    ),
+).Methods(http.MethodGet)
+
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		utils.Error(w, http.StatusNotFound, "route not found")
 	})
