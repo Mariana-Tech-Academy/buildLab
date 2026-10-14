@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func CategoryRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
+func CategoryRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(repo)
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
@@ -20,7 +20,7 @@ func CategoryRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 	// public routes: GET /categories
 
 	// admin routes: POST /categories, PUT /categories/{id}, DELETE /categories/{id}
-	admin := protected(router, tokens)
+	admin := protected(router, tokens, blacklist)
 	admin.Use(middleware.RequireRole(models.RoleAdmin))
 
 	_, _ = categoryHandler, admin
