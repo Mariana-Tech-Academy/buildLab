@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"Fhub/models"
@@ -16,6 +17,17 @@ var (
 	ErrRestaurantForbidden = errors.New("you do not own this restaurant")
 	ErrInvalidRestaurant   = errors.New("invalid restaurant details")
 )
+
+type CreateRestaurantInput struct {
+	ManagerID   uint
+	Name        string
+	Description string
+	Address     string
+	Phone       string
+	Email       string
+	OpeningTime string
+	ClosingTime string
+}
 
 // UpdateRestaurantInput contains only fields managers can update.
 // Pointer fields allow us to distinguish omitted fields from empty values.
@@ -33,6 +45,8 @@ type UpdateRestaurantInput struct {
 }
 
 type RestaurantService interface {
+	Create(input CreateRestaurantInput) (*models.Restaurant, error)
+
 	UpdateRestaurant(
 		restaurantID uint,
 		managerID uint,
@@ -40,16 +54,15 @@ type RestaurantService interface {
 	) (*models.Restaurant, error)
 
 	CheckOwnership(
-        restaurantID uint,
-        managerID uint,
-    ) error
+		restaurantID uint,
+		managerID uint,
+	) error
 
 	UpdateRestaurantImage(
-    restaurantID uint,
-    managerID uint,
-    imageURL string,
-) error
-
+		restaurantID uint,
+		managerID uint,
+		imageURL string,
+	) error
 }
 
 type restaurantService struct {
@@ -62,26 +75,46 @@ func NewRestaurantService(
 	return &restaurantService{restaurantRepo: repo}
 }
 
+func (s *restaurantService) Create(input CreateRestaurantInput) (*models.Restaurant, error) { // Create a new restaurant with the provided input and return the created restaurant or an error
+	restaurant := &models.Restaurant{ // Create a new Restaurant model instance with the provided input
+		ManagerID:   input.ManagerID,
+		Name:        input.Name,
+		Description: input.Description,
+		Address:     input.Address,
+		Phone:       input.Phone,
+		Email:       strings.ToLower(input.Email),
+		OpeningTime: input.OpeningTime,
+		ClosingTime: input.ClosingTime,
+		Status:      models.RestaurantStatusPending, // Set the initial status to pending approval
+	}
+
+	if err := s.restaurantRepo.Create(restaurant); err != nil {
+		return nil, err
+	}
+
+	return restaurant, nil
+}
+
 func (s *restaurantService) CheckOwnership(
-    restaurantID uint,
-    managerID uint,
+	restaurantID uint,
+	managerID uint,
 ) error {
 
-    restaurant, err := s.restaurantRepo.FindByID(restaurantID)
+	restaurant, err := s.restaurantRepo.FindByID(restaurantID)
 
-    if errors.Is(err, gorm.ErrRecordNotFound) {
-        return ErrRestaurantNotFound
-    }
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrRestaurantNotFound
+	}
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    if restaurant.ManagerID != managerID {
-        return ErrRestaurantForbidden
-    }
+	if restaurant.ManagerID != managerID {
+		return ErrRestaurantForbidden
+	}
 
-    return nil
+	return nil
 }
 
 func (s *restaurantService) UpdateRestaurant(
@@ -178,27 +211,26 @@ func (s *restaurantService) UpdateRestaurant(
 	return restaurant, nil
 }
 
-
 func (s *restaurantService) UpdateRestaurantImage(
-    restaurantID uint,
-    managerID uint,
-    imageURL string,
+	restaurantID uint,
+	managerID uint,
+	imageURL string,
 ) error {
 
-    // Step 1: Confirm the manager owns the restaurant.
-    err := s.CheckOwnership(restaurantID, managerID)
-    if err != nil {
-        return err
-    }
+	// Step 1: Confirm the manager owns the restaurant.
+	err := s.CheckOwnership(restaurantID, managerID)
+	if err != nil {
+		return err
+	}
 
-    // Step 2: Update the image URL in the database.
-    err = s.restaurantRepo.UpdateImageURL(
-        restaurantID,
-        imageURL,
-    )
-    if err != nil {
-        return err
-    }
+	// Step 2: Update the image URL in the database.
+	err = s.restaurantRepo.UpdateImageURL(
+		restaurantID,
+		imageURL,
+	)
+	if err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }

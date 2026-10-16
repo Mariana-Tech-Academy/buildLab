@@ -11,6 +11,7 @@ import (
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
+	FindByEmail(email string) (*models.User, error)
 }
 
 type PostgresUserRepo struct {
@@ -45,4 +46,13 @@ func (r *PostgresUserRepo) UpdateProfile(ctx context.Context, id uint, firstName
 	}
 
 	return user, nil
+}
+
+func (r *PostgresUserRepo) FindByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

@@ -1,63 +1,66 @@
-
 package repository
 
 import (
-    "Fhub/models"
+	"Fhub/models"
 
-    "gorm.io/gorm"
+	"gorm.io/gorm"
 )
 
 // RestaurantRepository defines database operations.
 type RestaurantRepository interface {
-    FindByID(id uint) (*models.Restaurant, error)
-    Update(restaurant *models.Restaurant) error
-    UpdateImageURL(
-    restaurantID uint,
-    imageURL string,
-) error
+	Create(restaurant *models.Restaurant) error
+	FindByID(id uint) (*models.Restaurant, error)
+	Update(restaurant *models.Restaurant) error
+	UpdateImageURL(
+		restaurantID uint,
+		imageURL string,
+	) error
 }
 
 // PostgresRestaurantRepo implements RestaurantRepository.
 type PostgresRestaurantRepo struct {
-    db *gorm.DB
+	db *gorm.DB
 }
 
 // NewRestaurantRepository creates a repository instance.
 func NewRestaurantRepository(
-    db *gorm.DB,
+	db *gorm.DB,
 ) RestaurantRepository {
-    return &PostgresRestaurantRepo{db: db}
+	return &PostgresRestaurantRepo{db: db}
+}
+
+func (r *PostgresRestaurantRepo) Create(restaurant *models.Restaurant) error {
+	return r.db.Create(restaurant).Error
 }
 
 // FindByID retrieves a restaurant using its ID.
 func (r *PostgresRestaurantRepo) FindByID(
-    id uint,
+	id uint,
 ) (*models.Restaurant, error) {
 
-    var restaurant models.Restaurant
+	var restaurant models.Restaurant
 
-    err := r.db.First(&restaurant, id).Error
+	err := r.db.First(&restaurant, id).Error
 
-    if err != nil {
-        return nil, err
-    }
+	if err != nil {
+		return nil, err
+	}
 
-    return &restaurant, nil
+	return &restaurant, nil
 }
 
 // Update saves restaurant changes to the database.
 func (r *PostgresRestaurantRepo) Update(
-    restaurant *models.Restaurant,
+	restaurant *models.Restaurant,
 ) error {
-    return r.db.Save(restaurant).Error
+	return r.db.Save(restaurant).Error
 }
 
-
 func (r *PostgresRestaurantRepo) UpdateImageURL(
-    restaurantID uint,
-    imageURL string,
+	restaurantID uint,
+	imageURL string,
 ) error {
-    return r.db.Model(&models.Restaurant{}).
-        Where("id = ?", restaurantID).
-        Update("image_url", imageURL).Error
+	return r.db.Model(&models.Restaurant{}).
+		Where("id = ?", restaurantID).
+		Update("image_url", imageURL).Error
 }
