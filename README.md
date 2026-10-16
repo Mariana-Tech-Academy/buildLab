@@ -70,18 +70,10 @@ _TODO: backend URL, frontend URL._
 
 _TODO_
 
+## Logout behaviour
 
+`POST /api/auth/logout` adds the caller's token to a blacklist, and every protected endpoint rejects
+blacklisted tokens until they expire. The frontend should also discard the token.
 
-
-http://localhost:8080/api/auth/login
-
-
-
-
-http://localhost:8080/api/users/me
-
-{
-  "first_name": "Jane",
-  "last_name": "Smith",
-  "phone": "07123456789"
-}
+The blacklist is kept in memory, so after a server restart or redeploy, logged-out tokens are
+accepted again until they expire. It is also not shared between multiple server instances.

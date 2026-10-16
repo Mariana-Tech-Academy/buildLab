@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
+func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewMenuRepository(db)
 	menuService := service.NewMenuService(repo)
 	menuHandler := handlers.NewMenuHandler(menuService)
@@ -21,7 +21,7 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
 
 	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
 	// The service must also check the item belongs to the calling manager's restaurant.
-	manager := protected(router, tokens)
+	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
 	_, _ = menuHandler, manager

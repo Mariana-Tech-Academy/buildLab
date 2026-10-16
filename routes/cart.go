@@ -12,13 +12,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager) {
+func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewCartRepository(db)
 	cartService := service.NewCartService(repo)
 	cartHandler := handlers.NewCartHandler(cartService)
 
 	// customer routes: GET /cart, POST /cart/items, PUT /cart/items/{id}, DELETE /cart/items/{id}, DELETE /cart
-	customer := protected(router, tokens)
+	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
 
 	_, _ = cartHandler, customer

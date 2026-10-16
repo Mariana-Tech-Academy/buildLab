@@ -23,8 +23,6 @@ func NewRestaurantHandler(service service.RestaurantService) *RestaurantHandler 
 
 }
 
-
-
 type createRestaurantRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -49,10 +47,9 @@ type restaurantResponse struct {
 	CreatedAt   time.Time               `json:"created_at"`
 }
 
-
 var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
 
-func (req *createRestaurantRequest) validate() map[string]string {  // Validate the request fields and return a map of field names to error messages
+func (req *createRestaurantRequest) validate() map[string]string { // Validate the request fields and return a map of field names to error messages
 	errs := map[string]string{}
 
 	req.Name = strings.TrimSpace(req.Name)
@@ -79,21 +76,21 @@ func (req *createRestaurantRequest) validate() map[string]string {  // Validate 
 	} else if !restaurantPhoneRegex.MatchString(req.Phone) {
 		errs["phone"] = "phone must be a valid UK number, e.g. 01131234567 or +441131234567"
 	}
-if req.Email == "" {
+	if req.Email == "" {
 		errs["email"] = "email is required"
 	} else if addr, err := mail.ParseAddress(req.Email); err != nil || addr.Address != req.Email {
 		errs["email"] = "email must be a valid email address"
 	}
 
-	opening, openingErr := time.Parse("15:04", req.OpeningTime)  //
+	opening, openingErr := time.Parse("15:04", req.OpeningTime) //
 	if req.OpeningTime == "" {
 		errs["opening_time"] = "opening time is required"
 	} else if openingErr != nil {
 		errs["opening_time"] = "opening time must be in HH:MM format, e.g. 09:00"
 	} else {
-		req.OpeningTime = opening.Format("15:04")   
+		req.OpeningTime = opening.Format("15:04")
 	}
-closing, closingErr := time.Parse("15:04", req.ClosingTime)   
+	closing, closingErr := time.Parse("15:04", req.ClosingTime)
 	if req.ClosingTime == "" {
 		errs["closing_time"] = "closing time is required"
 	} else if closingErr != nil {
@@ -109,7 +106,7 @@ closing, closingErr := time.Parse("15:04", req.ClosingTime)
 	return errs
 }
 
-func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) {  // Create a new restaurant
+func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) { // Create a new restaurant
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
 		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
@@ -130,8 +127,8 @@ func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) {  //
 		})
 		return
 	}
-restaurant, err := h.RestaurantService.Create(service.CreateRestaurantInput{    // Call the service layer to create the restaurant
-		ManagerID:   claims.UserID, 
+	restaurant, err := h.RestaurantService.Create(service.CreateRestaurantInput{ // Call the service layer to create the restaurant
+		ManagerID:   claims.UserID,
 		Name:        req.Name,
 		Description: req.Description,
 		Address:     req.Address,
@@ -141,11 +138,11 @@ restaurant, err := h.RestaurantService.Create(service.CreateRestaurantInput{    
 		ClosingTime: req.ClosingTime,
 	})
 	if err != nil {
-		log.Printf("create restaurant: %v", err)  // Log the error for debugging purposes
+		log.Printf("create restaurant: %v", err) // Log the error for debugging purposes
 		utils.Error(w, http.StatusInternalServerError, "could not create restaurant")
 		return
 	}
-   utils.Success(w, http.StatusCreated, "restaurant created and pending approval", restaurantResponse{
+	utils.Success(w, http.StatusCreated, "restaurant created and pending approval", restaurantResponse{
 		ID:          restaurant.ID,
 		ManagerID:   restaurant.ManagerID,
 		Name:        restaurant.Name,
