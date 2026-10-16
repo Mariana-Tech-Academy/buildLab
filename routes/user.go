@@ -20,7 +20,8 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 
 	// public routes: POST /auth/register, POST /auth/login
 	public := router.PathPrefix("/auth").Subrouter()
-	public.HandleFunc("/login", userHandler.Login).Methods("POST")
+	public.HandleFunc("/register", userHandler.Register).Methods(http.MethodPost)
+	public.HandleFunc("/login", userHandler.Login).Methods(http.MethodPost)
 
 	// protected routes: POST /auth/logout, GET /auth/me, PUT /users/me, PUT /users/me/password
 	authed := protected(router, tokens, blacklist)
