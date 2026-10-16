@@ -12,6 +12,7 @@ import (
 	"Fhub/repository"
 	"Fhub/utils"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -51,8 +52,8 @@ type LoginResponse struct {
 type UserService interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
-	Login(email, password string) (*LoginResponse, error)
-	Register(input RegisterInput) (*models.User, error)
+	Login(ctx context.Context, email, password string) (*LoginResponse, error)
+	Register(ctx context.Context, input RegisterInput) (*models.User, error)
 }
 
 type userService struct {
@@ -88,8 +89,8 @@ func (s *userService) UpdateProfile(ctx context.Context, id uint, firstName, las
 	return user, err
 }
 
-func (s *userService) Login(email, password string) (*LoginResponse, error) {
-	user, err := s.userRepo.FindByEmail(email)
+func (s *userService) Login(ctx context.Context, email, password string) (*LoginResponse, error) {
+	user, err := s.userRepo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrInvalidCredentials
@@ -99,7 +100,6 @@ func (s *userService) Login(email, password string) (*LoginResponse, error) {
 
 	if !utils.CheckPassword(user.Password, password) {
 		return nil, ErrInvalidCredentials
-
 	}
 	if user.Status == models.UserStatusSuspended {
 		return nil, ErrAccountSuspended
@@ -128,10 +128,10 @@ func (s *userService) Login(email, password string) (*LoginResponse, error) {
 	}, nil
 }
 
-func (s *userService) Register(input RegisterInput) (*models.User, error) {
-	email := strings.ToLower(input.Email)
+func (s *userService) Register(ctx context.Context, input RegisterInput) (*models.User, error) {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
 
-	exists, err := s.userRepo.EmailExists(email)
+	exists, err := s.userRepo.EmailExists(ctx, email)
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +154,20 @@ func (s *userService) Register(input RegisterInput) (*models.User, error) {
 		Status:    models.UserStatusActive,
 	}
 
-	if err := s.userRepo.Create(user); err != nil {
+	if err := s.userRepo.CreateWithCart(ctx, user); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrEmailTaken
+		}
 		return nil, err
 	}
 
 	return user, nil
+}
+
+func isUniqueViolation(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

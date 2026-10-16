@@ -142,14 +142,14 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	input.Email = strings.TrimSpace(input.Email)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 
 	if input.Email == "" || input.Password == "" {
 		utils.Error(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
 
-	result, err := h.UserService.Login(input.Email, input.Password)
+	result, err := h.UserService.Login(r.Context(), input.Email, input.Password)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
@@ -185,7 +185,7 @@ type registerRequest struct {
 	ConfirmPassword string `json:"confirm_password"`
 }
 
-var ukPhoneRegex = regexp.MustCompile(`^(0|\+44\d{10}$)`)
+var ukPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
 
 func (req *registerRequest) validate() map[string]string {
 	errs := map[string]string{}
@@ -264,6 +264,8 @@ type registerUserResponse struct {
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.Error(w, http.StatusBadRequest, "invalid request body")
@@ -271,7 +273,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if errs := req.validate(); len(errs) > 0 {
-		utils.JSON(w, http.StatusBadRequest, utils.Response{
+		utils.JSON(w, http.StatusUnprocessableEntity, utils.Response{
 			Success: false,
 			Message: "validation failed",
 			Data:    errs,
@@ -279,7 +281,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.UserService.Register(service.RegisterInput{
+	user, err := h.UserService.Register(r.Context(), service.RegisterInput{
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
 		Email:     req.Email,
@@ -291,7 +293,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("register user: %V", err)
+		log.Printf("register user: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "could not create account")
 		return
 	}
