@@ -175,8 +175,14 @@ func isUniqueViolation(err error) bool {
 }
 
 func (s *userService) ChangePassword(ctx context.Context, id uint, currentPassword, newPassword string) error {
-	if currentPassword == "" || len(newPassword) < 8 {
-		return ErrValidation
+	if currentPassword == "" {
+		return fmt.Errorf("%w: current password is required", ErrValidation)
+	}
+	if !utils.IsStrongPassword(newPassword) {
+		return fmt.Errorf("%w: password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number", ErrValidation)
+	}
+	if currentPassword == newPassword {
+		return fmt.Errorf("%w: new password must be different from the current password", ErrValidation)
 	}
 
 	user, err := s.GetUserByID(ctx, id)
@@ -193,5 +199,11 @@ func (s *userService) ChangePassword(ctx context.Context, id uint, currentPasswo
 		return err
 	}
 
-	return s.userRepo.UpdatePassword(ctx, id, newHash)
+	if err := s.userRepo.UpdatePassword(ctx, id, newHash); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
 }

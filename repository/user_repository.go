@@ -77,8 +77,15 @@ func (r *PostgresUserRepo) CreateWithCart(ctx context.Context, user *models.User
 }
 
 func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash string) error {
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Model(&models.User{}).
 		Where("id = ?", id).
-		Update("password", newHash).Error
+		Update("password", newHash)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
