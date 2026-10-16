@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"Fhub/auth"
 	"Fhub/middleware"
@@ -216,7 +215,7 @@ func (req *registerRequest) validate() map[string]string {
 
 	if req.Password == "" {
 		errs["password"] = "password is required"
-	} else if !isStrongPassword(req.Password) {
+	} else if !utils.IsStrongPassword(req.Password) {
 		errs["password"] = "password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number"
 	}
 
@@ -232,25 +231,6 @@ func (req *registerRequest) validate() map[string]string {
 func isValidEmail(email string) bool {
 	addr, err := mail.ParseAddress(email)
 	return err == nil && addr.Address == email
-}
-
-func isStrongPassword(password string) bool {
-	if len(password) < 8 || len(password) > 72 {
-		return false
-	}
-
-	var hasUpper, hasLower, hasDigit bool
-	for _, ch := range password {
-		switch {
-		case unicode.IsUpper(ch):
-			hasUpper = true
-		case unicode.IsLower(ch):
-			hasLower = true
-		case unicode.IsDigit(ch):
-			hasDigit = true
-		}
-	}
-	return hasUpper && hasLower && hasDigit
 }
 
 type registerUserResponse struct {
@@ -307,4 +287,81 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Role:      user.Role,
 		CreatedAt: user.CreatedAt,
 	})
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword    string `json:"current_password"`
+	NewPassword        string `json:"new_password"`
+	ConfirmNewPassword string `json:"confirm_new_password"`
+}
+
+func (req *ChangePasswordRequest) validate() map[string]string {
+	errs := map[string]string{}
+
+	if req.CurrentPassword == "" {
+		errs["current_password"] = "current password is required"
+	}
+	if req.NewPassword == "" {
+		errs["new_password"] = "new password is required"
+	} else if !utils.IsStrongPassword(req.NewPassword) {
+		errs["new_password"] = "password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number"
+	}
+	if req.ConfirmNewPassword == "" {
+		errs["confirm_new_password"] = "please confirm your new password"
+	} else if req.ConfirmNewPassword != req.NewPassword {
+		errs["confirm_new_password"] = "passwords do not match"
+	}
+	if req.CurrentPassword != "" && req.NewPassword != "" && req.CurrentPassword == req.NewPassword {
+		errs["new_password"] = "new password must be different from the current password"
+	}
+
+	return errs
+}
+
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if errs := req.validate(); len(errs) > 0 {
+		utils.JSON(w, http.StatusUnprocessableEntity, utils.Response{
+			Success: false,
+			Message: "validation failed",
+			Data:    errs,
+		})
+		return
+	}
+
+	err = h.UserService.ChangePassword(
+		r.Context(),
+		claims.UserID,
+		req.CurrentPassword,
+		req.NewPassword,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrIncorrectPassword):
+			utils.Error(w, http.StatusUnauthorized, "incorrect current password")
+		case errors.Is(err, service.ErrValidation):
+			utils.Error(w, http.StatusUnprocessableEntity, err.Error())
+		case errors.Is(err, service.ErrUserNotFound):
+			utils.Error(w, http.StatusNotFound, "user not found")
+		default:
+			log.Printf("change password: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "could not change password")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "password changed successfully", nil)
 }

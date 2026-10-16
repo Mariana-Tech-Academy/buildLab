@@ -28,6 +28,7 @@ func UserRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	authed.HandleFunc("/auth/me", userHandler.GetMe).Methods(http.MethodGet)
 	authed.HandleFunc("/auth/logout", userHandler.Logout).Methods(http.MethodPost)
 	authed.HandleFunc("/users/me", userHandler.UpdateProfile).Methods(http.MethodPut)
+	authed.HandleFunc("/users/me/password", userHandler.ChangePassword).Methods(http.MethodPut)
 
 	_ = public
 }

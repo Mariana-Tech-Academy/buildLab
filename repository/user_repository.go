@@ -14,6 +14,7 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	EmailExists(ctx context.Context, email string) (bool, error)
 	CreateWithCart(ctx context.Context, user *models.User) error
+	UpdatePassword(ctx context.Context, id uint, newHash string) error
 }
 
 type PostgresUserRepo struct {
@@ -73,4 +74,18 @@ func (r *PostgresUserRepo) CreateWithCart(ctx context.Context, user *models.User
 		}
 		return tx.Create(&models.Cart{UserID: user.ID}).Error
 	})
+}
+
+func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash string) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("password", newHash)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
