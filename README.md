@@ -62,6 +62,16 @@ CI runs `gofmt`, `go vet` and `go build` on every pull request.
 - ERD: [`docs/erd.md`](docs/erd.md)
 - API docs: _TODO (Swagger or Postman collection)_
 
+## Restaurant images
+
+Managers upload restaurant logos with `PUT /api/restaurants/{id}/image` (multipart field `image`,
+JPEG or PNG, max 5 MB). Files are stored under `./uploads/restaurants/` and served at
+`/uploads/restaurants/<filename>`.
+
+This local disk storage is fine for development and the MVP demo. Uploaded files are lost on
+redeploy (e.g. Render) and are not shared between multiple server instances. A later stretch is
+object storage (S3, Cloudinary, etc.).
+
 ## Deployment
 
 _TODO: backend URL, frontend URL._

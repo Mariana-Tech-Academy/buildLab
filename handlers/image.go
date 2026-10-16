@@ -1,21 +1,20 @@
 package handlers
 
 import (
-	"Fhub/auth"
-	"Fhub/service"
-	"Fhub/utils"
 	"errors"
+	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"mime/multipart"
-
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+
+	"Fhub/auth"
+	"Fhub/utils"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -25,16 +24,7 @@ const MaxRestaurantImageSize = 5 * 1024 * 1024
 
 var ErrInvalidImage = errors.New("invalid restaurant image")
 
-func validateRestaurantImage(
-	file multipart.File,
-	size int64,
-) (string, error) {
-
-	if size <= 0 || size > MaxRestaurantImageSize {
-		return "", ErrInvalidImage
-	}
-
-	// Check the actual image format.
+func validateRestaurantImage(file io.ReadSeeker) (string, error) {
 	_, format, err := image.DecodeConfig(file)
 	if err != nil {
 		return "", ErrInvalidImage
@@ -44,64 +34,36 @@ func validateRestaurantImage(
 		"jpeg": ".jpg",
 		"png":  ".png",
 	}
-
 	extension, allowed := extensions[format]
 	if !allowed {
 		return "", ErrInvalidImage
 	}
 
-	// Return the file pointer to the beginning.
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
-
 	return extension, nil
 }
 
-func (h *RestaurantHandler) UploadRestaurantImage(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
-	// Step 1: Get restaurant ID.
-	restaurantID, err := strconv.ParseUint(
-		mux.Vars(r)["id"], 10, 64,
-	)
+func (h *RestaurantHandler) UploadRestaurantImage(w http.ResponseWriter, r *http.Request) {
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil || restaurantID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
 	}
 
-	// Step 2: Get authenticated manager.
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
 		utils.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	managerID := claims.UserID
-
-	// Step 3: Check restaurant ownership.
-	err = h.RestaurantService.CheckOwnership(
-		uint(restaurantID),
-		managerID,
-	)
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrRestaurantForbidden):
-			utils.Error(w, http.StatusForbidden, "not your restaurant")
-		case errors.Is(err, service.ErrRestaurantNotFound):
-			utils.Error(w, http.StatusNotFound, "restaurant not found")
-		default:
-			utils.Error(w, http.StatusInternalServerError, "ownership check failed")
-		}
+	if err := h.RestaurantService.CheckOwnership(r.Context(), uint(restaurantID), claims.UserID, claims.Role); err != nil {
+		writeRestaurantError(w, err)
 		return
 	}
 
-	// Step 4: Limit the total request body.
-	r.Body = http.MaxBytesReader(
-		w, r.Body, MaxRestaurantImageSize+(1<<20),
-	)
-
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRestaurantImageSize+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		utils.Error(w, http.StatusBadRequest, "invalid or oversized upload")
 		return
@@ -110,23 +72,21 @@ func (h *RestaurantHandler) UploadRestaurantImage(
 		defer r.MultipartForm.RemoveAll()
 	}
 
-	file, header, err := r.FormFile("image")
+	file, _, err := r.FormFile("image")
 	if err != nil {
 		utils.Error(w, http.StatusBadRequest, "image is required")
 		return
 	}
 	defer file.Close()
 
-	extension, err := validateRestaurantImage(file, header.Size)
+	extension, err := validateRestaurantImage(file)
 	if err != nil {
 		utils.Error(w, http.StatusBadRequest, "invalid image type or size")
 		return
 	}
 
-	// Step 5: Save the image.
 	uploadDir := filepath.Join("uploads", "restaurants")
-
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		utils.Error(w, http.StatusInternalServerError, "cannot create upload folder")
 		return
 	}
@@ -134,57 +94,51 @@ func (h *RestaurantHandler) UploadRestaurantImage(
 	filename := uuid.NewString() + extension
 	imagePath := filepath.Join(uploadDir, filename)
 
-	destination, err := os.OpenFile(
-		imagePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644,
-	)
+	destination, err := os.OpenFile(imagePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, "cannot save image")
 		return
 	}
 
-	_, copyErr := io.Copy(destination, file)
+	// Enforce the size limit while writing; do not trust multipart header.Size.
+	written, copyErr := io.Copy(destination, io.LimitReader(file, MaxRestaurantImageSize+1))
 	closeErr := destination.Close()
-
-	if copyErr != nil || closeErr != nil {
+	if copyErr != nil || closeErr != nil || written > MaxRestaurantImageSize {
 		os.Remove(imagePath)
+		if written > MaxRestaurantImageSize {
+			utils.Error(w, http.StatusBadRequest, "invalid image type or size")
+			return
+		}
 		utils.Error(w, http.StatusInternalServerError, "image upload failed")
 		return
 	}
 
 	imageURL := fmt.Sprintf("/uploads/restaurants/%s", filename)
 
-	// Save the image URL to PostgreSQL.
-	err = h.RestaurantService.UpdateRestaurantImage(
+	previousURL, err := h.RestaurantService.UpdateRestaurantImage(
+		r.Context(),
 		uint(restaurantID),
-		managerID,
+		claims.UserID,
+		claims.Role,
 		imageURL,
 	)
-
 	if err != nil {
-		// Remove the uploaded file if the database update fails.
 		os.Remove(imagePath)
-
-		switch {
-		case errors.Is(err, service.ErrRestaurantForbidden):
-			utils.Error(w, http.StatusForbidden, "not your restaurant")
-
-		case errors.Is(err, service.ErrRestaurantNotFound):
-			utils.Error(w, http.StatusNotFound, "restaurant not found")
-
-		default:
-			utils.Error(w, http.StatusInternalServerError, "failed to update restaurant image")
-		}
+		writeRestaurantError(w, err)
 		return
 	}
 
-	// Image uploaded and database updated successfully.
-	utils.Success(
-		w,
-		http.StatusOK,
-		"restaurant image updated successfully",
-		map[string]string{
-			"image_url": imageURL,
-		},
-	)
+	removeLocalRestaurantImage(previousURL)
 
+	utils.Success(w, http.StatusOK, "restaurant image updated successfully", map[string]string{
+		"image_url": imageURL,
+	})
+}
+
+func removeLocalRestaurantImage(imageURL string) {
+	if imageURL == "" || !strings.HasPrefix(imageURL, "/uploads/restaurants/") {
+		return
+	}
+	path := filepath.Join(".", filepath.FromSlash(strings.TrimPrefix(imageURL, "/")))
+	_ = os.Remove(path)
 }
