@@ -23,6 +23,7 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	// The service must also check the restaurant belongs to the calling manager.
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
+	manager.HandleFunc("/restaurants", restaurantHandler.Create).Methods("POST")
 
 	_, _ = restaurantHandler, manager
 }

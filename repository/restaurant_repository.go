@@ -1,8 +1,13 @@
 package repository
 
-import "gorm.io/gorm"
+import (
+	"Fhub/models"
+
+	"gorm.io/gorm"
+)
 
 type RestaurantRepository interface {
+	Create(restaurant *models.Restaurant) error
 }
 
 type PostgresRestaurantRepo struct {
@@ -11,4 +16,8 @@ type PostgresRestaurantRepo struct {
 
 func NewRestaurantRepository(db *gorm.DB) RestaurantRepository {
 	return &PostgresRestaurantRepo{db: db}
+}
+
+func (r *PostgresRestaurantRepo) Create(restaurant *models.Restaurant) error {
+	return r.db.Create(restaurant).Error
 }
