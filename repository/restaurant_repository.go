@@ -10,7 +10,7 @@ import (
 
 // RestaurantRepository defines database operations.
 type RestaurantRepository interface {
-	Create(ctx context.Context, restaurant *models.Restaurant) error
+	CreateRestaurant(ctx context.Context, restaurant *models.Restaurant) error
 	FindByID(ctx context.Context, id uint) (*models.Restaurant, error)
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
@@ -26,7 +26,7 @@ func NewRestaurantRepository(db *gorm.DB) RestaurantRepository {
 	return &PostgresRestaurantRepo{db: db}
 }
 
-func (r *PostgresRestaurantRepo) Create(ctx context.Context, restaurant *models.Restaurant) error {
+func (r *PostgresRestaurantRepo) CreateRestaurant(ctx context.Context, restaurant *models.Restaurant) error {
 	return r.db.WithContext(ctx).Create(restaurant).Error
 }
 
@@ -49,3 +49,41 @@ func (r *PostgresRestaurantRepo) UpdateImageURL(ctx context.Context, restaurantI
 		Where("id = ?", restaurantID).
 		Update("image_url", imageURL).Error
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// func (r *PostgresRestaurantRepo) FindByID(id uint) (*models.Restaurant, error) {
+// 	var restaurant models.Restaurant
+// 	err := r.db.First(&restaurant, id).Error
+// 	if errors.Is(err, gorm.ErrRecordNotFound) {
+// 		return nil, ErrRestaurantNotFound
+// 	}
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return &restaurant, nil
+// }
+
+// func (r *PostgresRestaurantRepo) FindByManagerID(managerID uint) (*models.Restaurant, error) {
+// 	var restaurant models.Restaurant
+// 	err := r.db.Where("manager_id = ?", managerID).First(&restaurant).Error
+// 	if errors.Is(err, gorm.ErrRecordNotFound) {
+// 		return nil, ErrRestaurantNotFound
+// 	}
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return &restaurant, nil
+// }
+

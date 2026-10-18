@@ -131,7 +131,7 @@ func (req *createRestaurantRequest) validate() map[string]string {
 	return errs
 }
 
-func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *RestaurantHandler) CreateRestaurant(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
 		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
@@ -155,7 +155,7 @@ func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	restaurant, err := h.RestaurantService.Create(r.Context(), service.CreateRestaurantInput{
+	restaurant, err := h.RestaurantService.CreateRestaurant(r.Context(), service.CreateRestaurantInput{
 		ManagerID:   claims.UserID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -181,7 +181,7 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)  //
 	if err != nil || restaurantID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
@@ -223,3 +223,32 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 		utils.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
 }
+
+
+// Get handles GET /api/restaurants/{id} (REST-05).
+func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http.Request) {
+	id, ok := muxID(w, r)   // Extract the restaurant ID from the URL path
+	if !ok {
+		return 
+	}
+
+	restaurant, err := h.RestaurantService.GetActiveRestaurant(r.Context(), id) // Fetch the restaurant details from the service layer
+	if err != nil {
+		utils.Error(w, http.StatusNotFound, "restaurant not found")
+		return
+	}
+	utils.Success(w, http.StatusOK, "ok", restaurant)
+}
+
+// muxID parses the {id} path variable as a positive integer.
+func muxID(w http.ResponseWriter, r *http.Request) (uint, bool) {
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)  // Parse the "id" variable from the URL path as an unsigned integer
+	if err != nil || id == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid id")
+		return 0, false
+	}
+	return uint(id), true
+}
+
+
+

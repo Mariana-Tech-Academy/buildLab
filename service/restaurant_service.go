@@ -19,7 +19,9 @@ var (
 	ErrRestaurantNotFound  = errors.New("restaurant not found")
 	ErrRestaurantForbidden = errors.New("you do not own this restaurant")
 	ErrInvalidRestaurant   = errors.New("invalid restaurant details")
+
 )
+
 
 var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
 
@@ -50,10 +52,11 @@ type UpdateRestaurantInput struct {
 }
 
 type RestaurantService interface {
-	Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error)
+	CreateRestaurant(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error)
 	UpdateRestaurant(ctx context.Context, restaurantID, actorID uint, role models.Role, input UpdateRestaurantInput) (*models.Restaurant, error)
 	CheckOwnership(ctx context.Context, restaurantID, actorID uint, role models.Role) error
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
+	GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error)
 }
 
 type restaurantService struct {
@@ -64,7 +67,7 @@ func NewRestaurantService(repo repository.RestaurantRepository) RestaurantServic
 	return &restaurantService{restaurantRepo: repo}
 }
 
-func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
+func (s *restaurantService) CreateRestaurant(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
 	restaurant := &models.Restaurant{
 		ManagerID:   input.ManagerID,
 		Name:        input.Name,
@@ -77,7 +80,7 @@ func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantIn
 		Status:      models.RestaurantStatusPending,
 	}
 
-	if err := s.restaurantRepo.Create(ctx, restaurant); err != nil {
+	if err := s.restaurantRepo.CreateRestaurant(ctx, restaurant); err != nil {
 		return nil, err
 	}
 	return restaurant, nil
@@ -233,4 +236,20 @@ func validateOpeningHours(openingTime, closingTime string) error {
 		return fmt.Errorf("%w: closing time must be after opening time", ErrInvalidRestaurant)
 	}
 	return nil
+}
+
+// GetActiveRestaurant returns full details of an Active restaurant; anything else is a 404 for customers (REST-05).
+func (s *restaurantService) GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error) {
+	restaurant, err := s.restaurantRepo.FindByID(ctx,restaurantID)
+	if err != nil {
+		if errors.Is(err, ErrRestaurantNotFound) {
+			return nil, ErrRestaurantNotFound              
+		}
+		return nil, err 
+	}
+	// Non-Active restaurants are invisible to customers (REST-05).
+	if restaurant.Status != models.RestaurantStatusActive {
+		return nil, ErrRestaurantNotFound
+	}
+	return restaurant, nil
 }
