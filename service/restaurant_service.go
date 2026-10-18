@@ -55,6 +55,7 @@ type RestaurantService interface {
 	CheckOwnership(ctx context.Context, restaurantID, actorID uint, role models.Role) error
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
 	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
+	ListActive(ctx context.Context) ([]models.Restaurant, error)
 }
 
 type restaurantService struct {
@@ -63,6 +64,9 @@ type restaurantService struct {
 
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
+}
+func (s *restaurantService) ListActive(ctx context.Context) ([]models.Restaurant, error) {
+    return s.restaurantRepo.ListActive(ctx)
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {

@@ -14,6 +14,7 @@ type RestaurantRepository interface {
 	FindByID(ctx context.Context, id uint) (*models.Restaurant, error)
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
+	ListActive(ctx context.Context) ([]models.Restaurant, error)
 }
 
 // PostgresRestaurantRepo implements RestaurantRepository.
@@ -37,6 +38,17 @@ func (r *PostgresRestaurantRepo) FindByID(ctx context.Context, id uint) (*models
 		return nil, err
 	}
 	return &restaurant, nil
+}
+
+// ListActive retrieves only active restaurants for customer listings.
+func (r *PostgresRestaurantRepo) ListActive(ctx context.Context) ([]models.Restaurant, error) {
+    var restaurants []models.Restaurant
+
+    err := r.db.WithContext(ctx).
+        Where("status = ?", models.RestaurantStatusActive).
+        Find(&restaurants).Error
+
+    return restaurants, err
 }
 
 // Update saves restaurant changes to the database.

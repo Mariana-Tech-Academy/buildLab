@@ -256,3 +256,17 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 		utils.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
 }
+func (h *RestaurantHandler) ListActive(w http.ResponseWriter, r *http.Request) {
+    restaurants, err := h.RestaurantService.ListActive(r.Context())
+    if err != nil {
+        utils.Error(w, http.StatusInternalServerError, "could not retrieve restaurants")
+        return
+    }
+
+    responses := make([]restaurantResponse, 0, len(restaurants))
+    for i := range restaurants {
+        responses = append(responses, newRestaurantResponse(&restaurants[i]))
+    }
+
+    utils.Success(w, http.StatusOK, "restaurants retrieved successfully", responses)
+}
