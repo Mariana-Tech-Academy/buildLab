@@ -42,13 +42,13 @@ func (r *PostgresRestaurantRepo) FindByID(ctx context.Context, id uint) (*models
 
 // ListActive retrieves only active restaurants for customer listings.
 func (r *PostgresRestaurantRepo) ListActive(ctx context.Context) ([]models.Restaurant, error) {
-    var restaurants []models.Restaurant
+	var restaurants []models.Restaurant
 
-    err := r.db.WithContext(ctx).
-        Where("status = ?", models.RestaurantStatusActive).
-        Find(&restaurants).Error
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.RestaurantStatusActive).
+		Find(&restaurants).Error
 
-    return restaurants, err
+	return restaurants, err
 }
 
 // Update saves restaurant changes to the database.

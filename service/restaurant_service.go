@@ -66,7 +66,7 @@ func NewRestaurantService(repo repository.RestaurantRepository) RestaurantServic
 	return &restaurantService{restaurantRepo: repo}
 }
 func (s *restaurantService) ListActive(ctx context.Context) ([]models.Restaurant, error) {
-    return s.restaurantRepo.ListActive(ctx)
+	return s.restaurantRepo.ListActive(ctx)
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {

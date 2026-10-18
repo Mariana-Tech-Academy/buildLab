@@ -15,7 +15,6 @@ var ErrRestaurantNotActive = errors.New("restaurant is not active")
 type OrderRepository interface {
 	IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error)
 	Checkout(ctx context.Context, userID uint, order *models.Order) error
-
 }
 
 type PostgresOrderRepo struct {
