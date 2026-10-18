@@ -14,6 +14,7 @@ type RestaurantRepository interface {
 	FindByID(ctx context.Context, id uint) (*models.Restaurant, error)
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
+	ListActive(ctx context.Context, limit, offset int) ([]models.Restaurant, int64, error)
 }
 
 // PostgresRestaurantRepo implements RestaurantRepository.
@@ -48,4 +49,30 @@ func (r *PostgresRestaurantRepo) UpdateImageURL(ctx context.Context, restaurantI
 	return r.db.WithContext(ctx).Model(&models.Restaurant{}).
 		Where("id = ?", restaurantID).
 		Update("image_url", imageURL).Error
+}
+
+// ListActive returns one page of active restaurants incl. the total no. of active restaurants
+func (r *PostgresRestaurantRepo) ListActive(ctx context.Context, limit, offset int) ([]models.Restaurant, int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Restaurant{}).
+		Where("status = ?", models.RestaurantStatusActive).
+		Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var restaurants []models.Restaurant
+	err = r.db.WithContext(ctx).
+		Where("status = ?", models.RestaurantStatusActive).
+		Order("name ASC, id ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&restaurants).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return restaurants, total, nil
+
 }

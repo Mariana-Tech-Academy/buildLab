@@ -49,11 +49,26 @@ type UpdateRestaurantInput struct {
 	ImageURL    *string `json:"-"`
 }
 
+// page settings
+const (
+	defaultRestaurantPageSize = 10
+	maxRestaurantPageSize     = 50
+)
+
+// RestaurantPage is one page of results incl. the details needed to show e.g. "page 1 of 10"
+type RestaurantPage struct {
+	Restaurants []models.Restaurant
+	Page        int
+	Limit       int
+	Total       int64
+}
+
 type RestaurantService interface {
 	Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error)
 	UpdateRestaurant(ctx context.Context, restaurantID, actorID uint, role models.Role, input UpdateRestaurantInput) (*models.Restaurant, error)
 	CheckOwnership(ctx context.Context, restaurantID, actorID uint, role models.Role) error
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
+	ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error)
 }
 
 type restaurantService struct {
@@ -233,4 +248,33 @@ func validateOpeningHours(openingTime, closingTime string) error {
 		return fmt.Errorf("%w: closing time must be after opening time", ErrInvalidRestaurant)
 	}
 	return nil
+}
+
+// ListActive will return a single page of active restaurants
+// a page or limit of 0 means "not given", so defaults are used
+func (s *restaurantService) ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error) {
+	if page < 1 {
+		page = 1
+	}
+
+	if limit < 1 {
+		limit = defaultRestaurantPageSize
+	}
+	if limit > maxRestaurantPageSize {
+		limit = maxRestaurantPageSize
+	}
+
+	offset := (page - 1) * limit
+
+	restaurants, total, err := s.restaurantRepo.ListActive(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RestaurantPage{
+		Restaurants: restaurants,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}, nil
 }
