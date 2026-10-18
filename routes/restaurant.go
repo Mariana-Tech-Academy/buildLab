@@ -21,7 +21,6 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	// public routes: GET /restaurants, GET /restaurants/{id}
 
 	// manager routes: POST /restaurants, PUT /restaurants/{id}, PATCH /restaurants/{id}/status
-	// The service must also check the restaurant belongs to the calling manager.
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 	manager.HandleFunc("/restaurants", restaurantHandler.Create).Methods("POST")
@@ -36,4 +35,7 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 		"/restaurants/{id}",
 		restaurantHandler.UpdateRestaurant,
 	).Methods(http.MethodPut)
+
+	// New route for activating/deactivating a restaurant
+	manager.HandleFunc("/restaurants/{id}/status", restaurantHandler.UpdateStatus).Methods(http.MethodPatch)
 }
