@@ -12,6 +12,7 @@ import (
 	"Fhub/repository"
 	"Fhub/utils"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -23,7 +24,17 @@ var (
 var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrAccountSuspended   = errors.New("your account is suspeneded")
+	ErrEmailTaken         = errors.New("email is already taken")
+	ErrIncorrectPassword  = errors.New("incorrect current password")
 )
+
+type RegisterInput struct {
+	FirstName string
+	LastName  string
+	Email     string
+	Phone     string
+	Password  string
+}
 
 type LoginUser struct {
 	ID        uint        `json:"id"`
@@ -42,7 +53,9 @@ type LoginResponse struct {
 type UserService interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
-	Login(email, password string) (*LoginResponse, error)
+	Login(ctx context.Context, email, password string) (*LoginResponse, error)
+	Register(ctx context.Context, input RegisterInput) (*models.User, error)
+	ChangePassword(ctx context.Context, id uint, currentPassword, newPassword string) error
 }
 
 type userService struct {
@@ -78,8 +91,8 @@ func (s *userService) UpdateProfile(ctx context.Context, id uint, firstName, las
 	return user, err
 }
 
-func (s *userService) Login(email, password string) (*LoginResponse, error) {
-	user, err := s.userRepo.FindByEmail(email)
+func (s *userService) Login(ctx context.Context, email, password string) (*LoginResponse, error) {
+	user, err := s.userRepo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrInvalidCredentials
@@ -89,7 +102,6 @@ func (s *userService) Login(email, password string) (*LoginResponse, error) {
 
 	if !utils.CheckPassword(user.Password, password) {
 		return nil, ErrInvalidCredentials
-
 	}
 	if user.Status == models.UserStatusSuspended {
 		return nil, ErrAccountSuspended
@@ -116,4 +128,82 @@ func (s *userService) Login(email, password string) (*LoginResponse, error) {
 			Role:      user.Role,
 		},
 	}, nil
+}
+
+func (s *userService) Register(ctx context.Context, input RegisterInput) (*models.User, error) {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+
+	exists, err := s.userRepo.EmailExists(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrEmailTaken
+	}
+
+	hashedPassword, err := utils.HashPassword(input.Password)
+	if err != nil {
+		return nil, err
+	}
+
+	user := &models.User{
+		FirstName: input.FirstName,
+		LastName:  input.LastName,
+		Email:     email,
+		Phone:     input.Phone,
+		Password:  hashedPassword,
+		Role:      models.RoleCustomer,
+		Status:    models.UserStatusActive,
+	}
+
+	if err := s.userRepo.CreateWithCart(ctx, user); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrEmailTaken
+		}
+		return nil, err
+	}
+
+	return user, nil
+}
+
+func isUniqueViolation(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func (s *userService) ChangePassword(ctx context.Context, id uint, currentPassword, newPassword string) error {
+	if currentPassword == "" {
+		return fmt.Errorf("%w: current password is required", ErrValidation)
+	}
+	if !utils.IsStrongPassword(newPassword) {
+		return fmt.Errorf("%w: password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number", ErrValidation)
+	}
+	if currentPassword == newPassword {
+		return fmt.Errorf("%w: new password must be different from the current password", ErrValidation)
+	}
+
+	user, err := s.GetUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if !utils.CheckPassword(user.Password, currentPassword) {
+		return ErrIncorrectPassword
+	}
+
+	newHash, err := utils.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	if err := s.userRepo.UpdatePassword(ctx, id, newHash); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
 }

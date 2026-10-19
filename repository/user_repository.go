@@ -11,7 +11,10 @@ import (
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
 	UpdateProfile(ctx context.Context, id uint, firstName, lastName, phone string) (*models.User, error)
-	FindByEmail(email string) (*models.User, error)
+	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	EmailExists(ctx context.Context, email string) (bool, error)
+	CreateWithCart(ctx context.Context, user *models.User) error
+	UpdatePassword(ctx context.Context, id uint, newHash string) error
 }
 
 type PostgresUserRepo struct {
@@ -48,11 +51,41 @@ func (r *PostgresUserRepo) UpdateProfile(ctx context.Context, id uint, firstName
 	return user, nil
 }
 
-func (r *PostgresUserRepo) FindByEmail(email string) (*models.User, error) {
+func (r *PostgresUserRepo) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	err := r.db.Where("email = ?", email).First(&user).Error
+	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
 	if err != nil {
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *PostgresUserRepo) EmailExists(ctx context.Context, email string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Unscoped().Model(&models.User{}).Where("email = ?", email).Count(&count).Error
+	return count > 0, err
+}
+
+// CreateWithCart creates the user and their empty cart in one transaction.
+func (r *PostgresUserRepo) CreateWithCart(ctx context.Context, user *models.User) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.Cart{UserID: user.ID}).Error
+	})
+}
+
+func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash string) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("password", newHash)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

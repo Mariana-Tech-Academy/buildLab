@@ -2,45 +2,83 @@ package repository
 
 import (
 	"context"
+
 	"Fhub/models"
 	"gorm.io/gorm"
-
 )
 
-// RestaurantRepository defines the database operations that other part of our application can use.
+// RestaurantRepository defines database operations for restaurants.
 type RestaurantRepository interface {
 	GetRestaurantByID(ctx context.Context, restaurantID uint) (*models.Restaurant, error)
+	Create(ctx context.Context, restaurant *models.Restaurant) error
+	FindByID(ctx context.Context, id uint) (*models.Restaurant, error)
+	Update(ctx context.Context, restaurant *models.Restaurant) error
+	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
 }
 
-//PostgresRestaurantRepo stores our database connection.
-//Then we use this connection to communicate with PostgreSQL.
+// PostgresRestaurantRepo connects the repository to PostgreSQL.
 type PostgresRestaurantRepo struct {
 	db *gorm.DB
 }
 
-//NewRestaurantRepository creates a new restaurant repository.
-//it Receives the database connection and stores it inside our struct.
+// NewRestaurantRepository creates a repository instance.
 func NewRestaurantRepository(db *gorm.DB) RestaurantRepository {
 	return &PostgresRestaurantRepo{db: db}
 }
 
-//GetRestaurantByID searches PostgreSQL for a restaurant using its ID.
-func (r *PostgresRestaurantRepo) GetRestaurantByID(ctx context.Context, restaurantID uint) (*models.Restaurant, error){
-	
-	//Create an empty restaurant variable to hold the database result.
+// GetRestaurantByID retrieves a restaurant using its ID.
+func (r *PostgresRestaurantRepo) GetRestaurantByID(
+	ctx context.Context,
+	restaurantID uint,
+) (*models.Restaurant, error) {
 	var restaurant models.Restaurant
 
-	//We use GORM to seach for the restaurant.
-	// WithContext(ctx) allows the database operation to follow the request context.
-	//First searches for the restaurant using its primary key.
-	//Error contains any erro that occured during the search.
-	err := r.db.WithContext(ctx).First(&restaurant,restaurantID).Error
-	
-	// If something goes wrong, return nil and the error.
+	err := r.db.WithContext(ctx).First(&restaurant, restaurantID).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// If the restaurant is found, it will return its details and nil means that there was no error.
 	return &restaurant, nil
+}
+
+// Create inserts a new restaurant.
+func (r *PostgresRestaurantRepo) Create(
+	ctx context.Context,
+	restaurant *models.Restaurant,
+) error {
+	return r.db.WithContext(ctx).Create(restaurant).Error
+}
+
+// FindByID retrieves a restaurant using its ID.
+func (r *PostgresRestaurantRepo) FindByID(
+	ctx context.Context,
+	id uint,
+) (*models.Restaurant, error) {
+	var restaurant models.Restaurant
+
+	if err := r.db.WithContext(ctx).First(&restaurant, id).Error; err != nil {
+		return nil, err
+	}
+
+	return &restaurant, nil
+}
+
+// Update saves changes to a restaurant.
+func (r *PostgresRestaurantRepo) Update(
+	ctx context.Context,
+	restaurant *models.Restaurant,
+) error {
+	return r.db.WithContext(ctx).Save(restaurant).Error
+}
+
+// UpdateImageURL updates a restaurant's image URL.
+func (r *PostgresRestaurantRepo) UpdateImageURL(
+	ctx context.Context,
+	restaurantID uint,
+	imageURL string,
+) error {
+	return r.db.WithContext(ctx).
+		Model(&models.Restaurant{}).
+		Where("id = ?", restaurantID).
+		Update("image_url", imageURL).Error
 }

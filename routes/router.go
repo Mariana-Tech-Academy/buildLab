@@ -13,6 +13,16 @@ import (
 
 func Router(db *gorm.DB, tokens *auth.JWTManager) *mux.Router {
 	r := mux.NewRouter()
+
+	// Serve uploaded restaurant images
+	r.PathPrefix("/uploads/").Handler(
+		http.StripPrefix(
+			"/uploads/",
+			http.FileServer(http.Dir("./uploads")),
+		),
+	).Methods(http.MethodGet)
+
+	// Token blacklist for authentication
 	blacklist := middleware.NewTokenBlacklist()
 
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
