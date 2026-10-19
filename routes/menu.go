@@ -17,10 +17,9 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	//Used to create the menu repository to communicate with the database.
 	repo := repository.NewMenuRepository(db)
 
-	
 	// We use to create the restaurant repository to retrieve restaurant information.
 	restaurantRepo := repository.NewRestaurantRepository(db)
-	
+
 	//Used to create the restaurant service to check restaurant ownership.
 	restaurantService := service.NewRestaurantService(restaurantRepo)
 

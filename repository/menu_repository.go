@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"context"
 	"Fhub/models"
+	"context"
 
 	"gorm.io/gorm"
 )
@@ -17,12 +17,12 @@ type PostgresMenuRepo struct {
 	db *gorm.DB
 }
 
-//The func name creates a new menu repository
+// The func name creates a new menu repository
 func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &PostgresMenuRepo{db: db}
 }
 
-//This will allow to save a menu item in postgreSQL with the use of "Create"
+// This will allow to save a menu item in postgreSQL with the use of "Create"
 func (r *PostgresMenuRepo) CreateMenuItem(ctx context.Context, item *models.MenuItem) error {
 	return r.db.WithContext(ctx).Create(item).Error
 }
