@@ -258,17 +258,83 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (h *RestaurantHandler) ListActive(w http.ResponseWriter, r *http.Request) {
-	restaurants, err := h.RestaurantService.ListActive(r.Context())
-	if err != nil {
-		utils.Error(w, http.StatusInternalServerError, "could not retrieve restaurants")
+// restaurantSummary is one restaurant in the browse list.
+// It only includes what customers need to see.
+type restaurantSummary struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	ImageURL    string `json:"image_url"`
+	Address     string `json:"address"`
+	City        string `json:"city"`
+	OpeningTime string `json:"opening_time"`
+	ClosingTime string `json:"closing_time"`
+}
+
+// will give the full response for one page
+type restaurantListResponse struct {
+	Restaurants []restaurantSummary `json:"restaurants"`
+	Page        int                 `json:"page"`
+	Limit       int                 `json:"limit"`
+	Total       int64               `json:"total"`
+}
+
+// reads a whole number from the URL
+// returns 0 if the value is missing, and false if the value is not positive whole number
+func parsePositiveIntQuery(r *http.Request, key string) (int, bool) {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return 0, true
+	}
+
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
+}
+
+// ListRestaurants handles GET
+func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Request) {
+	page, ok := parsePositiveIntQuery(r, "page")
+	if !ok {
+		utils.Error(w, http.StatusBadRequest, "page must be a positive whole number")
 		return
 	}
 
-	responses := make([]restaurantResponse, 0, len(restaurants))
-	for i := range restaurants {
-		responses = append(responses, newRestaurantResponse(&restaurants[i]))
+	limit, ok := parsePositiveIntQuery(r, "limit")
+	if !ok {
+		utils.Error(w, http.StatusBadRequest, "limit must be a positive whole number")
+		return
+	}
+	if limit > 50 {
+		utils.Error(w, http.StatusBadRequest, "limit must be between 1 and 50")
+		return
 	}
 
-	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", responses)
+	result, err := h.RestaurantService.ListActive(r.Context(), page, limit)
+	if err != nil {
+		log.Printf("list restaurants: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not load restaurants")
+		return
+	}
+
+	summaries := make([]restaurantSummary, 0, len(result.Restaurants))
+	for _, restaurant := range result.Restaurants {
+		summaries = append(summaries, restaurantSummary{
+			ID:          restaurant.ID,
+			Name:        restaurant.Name,
+			ImageURL:    restaurant.ImageURL,
+			Address:     restaurant.Address,
+			City:        restaurant.City,
+			OpeningTime: restaurant.OpeningTime,
+			ClosingTime: restaurant.ClosingTime,
+		})
+	}
+
+	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", restaurantListResponse{
+		Restaurants: summaries,
+		Page:        result.Page,
+		Limit:       result.Limit,
+		Total:       result.Total,
+	})
 }
