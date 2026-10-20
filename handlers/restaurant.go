@@ -213,6 +213,7 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 
 	utils.Success(w, http.StatusOK, "restaurant updated successfully", newRestaurantResponse(restaurant))
 }
+
 func (h *RestaurantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
@@ -256,6 +257,7 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 		utils.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
 }
+
 func (h *RestaurantHandler) ListActive(w http.ResponseWriter, r *http.Request) {
 	restaurants, err := h.RestaurantService.ListActive(r.Context())
 	if err != nil {

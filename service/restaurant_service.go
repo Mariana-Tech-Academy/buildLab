@@ -65,6 +65,7 @@ type restaurantService struct {
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
 }
+
 func (s *restaurantService) ListActive(ctx context.Context) ([]models.Restaurant, error) {
 	return s.restaurantRepo.ListActive(ctx)
 }
@@ -198,7 +199,12 @@ func (s *restaurantService) UpdateRestaurant(
 	}
 	return restaurant, nil
 }
+
 func (s *restaurantService) SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error) {
+	if !isValidRestaurantStatus(status) {
+		return nil, fmt.Errorf("%w: status must be one of pending_approval, active, inactive, suspended", ErrInvalidRestaurant)
+	}
+
 	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrRestaurantNotFound
@@ -228,6 +234,18 @@ func (s *restaurantService) SetRestaurantStatus(ctx context.Context, restaurantI
 		return nil, err
 	}
 	return restaurant, nil
+}
+
+func isValidRestaurantStatus(status models.RestaurantStatus) bool {
+	switch status {
+	case models.RestaurantStatusPending,
+		models.RestaurantStatusActive,
+		models.RestaurantStatusInactive,
+		models.RestaurantStatusSuspended:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *restaurantService) UpdateRestaurantImage(
