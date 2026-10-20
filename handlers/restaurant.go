@@ -37,6 +37,10 @@ type createRestaurantRequest struct {
 	ClosingTime string `json:"closing_time"`
 }
 
+type updateRestaurantStatusRequest struct {
+	Status models.RestaurantStatus `json:"status"`
+}
+
 type restaurantResponse struct {
 	ID          uint                    `json:"id"`
 	ManagerID   uint                    `json:"manager_id"`
@@ -210,6 +214,36 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 	utils.Success(w, http.StatusOK, "restaurant updated successfully", newRestaurantResponse(restaurant))
 }
 
+func (h *RestaurantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req updateRestaurantStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	restaurant, err := h.RestaurantService.SetRestaurantStatus(r.Context(), uint(restaurantID), claims.UserID, claims.Role, req.Status)
+	if err != nil {
+		writeRestaurantError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "restaurant status updated successfully", newRestaurantResponse(restaurant))
+}
+
 func writeRestaurantError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrRestaurantNotFound):
@@ -222,4 +256,19 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 		log.Printf("restaurant handler: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
+}
+
+func (h *RestaurantHandler) ListActive(w http.ResponseWriter, r *http.Request) {
+	restaurants, err := h.RestaurantService.ListActive(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusInternalServerError, "could not retrieve restaurants")
+		return
+	}
+
+	responses := make([]restaurantResponse, 0, len(restaurants))
+	for i := range restaurants {
+		responses = append(responses, newRestaurantResponse(&restaurants[i]))
+	}
+
+	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", responses)
 }

@@ -54,6 +54,8 @@ type RestaurantService interface {
 	UpdateRestaurant(ctx context.Context, restaurantID, actorID uint, role models.Role, input UpdateRestaurantInput) (*models.Restaurant, error)
 	CheckOwnership(ctx context.Context, restaurantID, actorID uint, role models.Role) error
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
+	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
+	ListActive(ctx context.Context) ([]models.Restaurant, error)
 }
 
 type restaurantService struct {
@@ -62,6 +64,10 @@ type restaurantService struct {
 
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
+}
+
+func (s *restaurantService) ListActive(ctx context.Context) ([]models.Restaurant, error) {
+	return s.restaurantRepo.ListActive(ctx)
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
@@ -192,6 +198,54 @@ func (s *restaurantService) UpdateRestaurant(
 		return nil, err
 	}
 	return restaurant, nil
+}
+
+func (s *restaurantService) SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error) {
+	if !isValidRestaurantStatus(status) {
+		return nil, fmt.Errorf("%w: status must be one of pending_approval, active, inactive, suspended", ErrInvalidRestaurant)
+	}
+
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrRestaurantNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if role != models.RoleAdmin && restaurant.ManagerID != actorID {
+		return nil, ErrRestaurantForbidden
+	}
+
+	if role != models.RoleAdmin {
+		if restaurant.Status != models.RestaurantStatusActive &&
+			restaurant.Status != models.RestaurantStatusInactive {
+			return nil, fmt.Errorf("%w: only an admin can change this status", ErrInvalidRestaurant)
+		}
+		if status != models.RestaurantStatusActive &&
+			status != models.RestaurantStatusInactive {
+			return nil, fmt.Errorf("%w: managers can only activate or deactivate", ErrInvalidRestaurant)
+		}
+	}
+
+	restaurant.Status = status
+
+	if err := s.restaurantRepo.Update(ctx, restaurant); err != nil {
+		return nil, err
+	}
+	return restaurant, nil
+}
+
+func isValidRestaurantStatus(status models.RestaurantStatus) bool {
+	switch status {
+	case models.RestaurantStatusPending,
+		models.RestaurantStatusActive,
+		models.RestaurantStatusInactive,
+		models.RestaurantStatusSuspended:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *restaurantService) UpdateRestaurantImage(
