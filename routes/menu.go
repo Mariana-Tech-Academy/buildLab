@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -13,8 +15,21 @@ import (
 )
 
 func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
+	//Used to create the menu repository to communicate with the database.
 	repo := repository.NewMenuRepository(db)
-	menuService := service.NewMenuService(repo)
+
+	// We use to create the restaurant repository to retrieve restaurant information.
+	restaurantRepo := repository.NewRestaurantRepository(db)
+
+	//Used to create the restaurant service to check restaurant ownership.
+	restaurantService := service.NewRestaurantService(restaurantRepo)
+
+	categoryRepo := repository.NewCategoryRepository(db)
+
+	//Used to connect both dependencies to the menu service.
+	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
+
+	// Create the menu handler to process HTTP requests.
 	menuHandler := handlers.NewMenuHandler(menuService)
 
 	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
@@ -24,5 +39,6 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_, _ = menuHandler, manager
+	// This route allows authenticated managers and admins to create menu items.
+	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
 }
