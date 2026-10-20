@@ -9,7 +9,6 @@ import (
 
 // RestaurantRepository defines database operations for restaurants.
 type RestaurantRepository interface {
-	GetRestaurantByID(ctx context.Context, restaurantID uint) (*models.Restaurant, error)
 	Create(ctx context.Context, restaurant *models.Restaurant) error
 	FindByID(ctx context.Context, id uint) (*models.Restaurant, error)
 	Update(ctx context.Context, restaurant *models.Restaurant) error
@@ -24,21 +23,6 @@ type PostgresRestaurantRepo struct {
 // NewRestaurantRepository creates a repository instance.
 func NewRestaurantRepository(db *gorm.DB) RestaurantRepository {
 	return &PostgresRestaurantRepo{db: db}
-}
-
-// GetRestaurantByID retrieves a restaurant using its ID.
-func (r *PostgresRestaurantRepo) GetRestaurantByID(
-	ctx context.Context,
-	restaurantID uint,
-) (*models.Restaurant, error) {
-	var restaurant models.Restaurant
-
-	err := r.db.WithContext(ctx).First(&restaurant, restaurantID).Error
-	if err != nil {
-		return nil, err
-	}
-
-	return &restaurant, nil
 }
 
 // Create inserts a new restaurant.

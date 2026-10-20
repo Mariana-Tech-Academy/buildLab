@@ -8,11 +8,17 @@ import (
 
 	"Fhub/models"
 	"Fhub/repository"
+
+	"gorm.io/gorm"
 )
 
-var ErrInvalidMenuItemInput = errors.New("invalid menu item input")
+var (
+	ErrInvalidMenuItemInput = errors.New("invalid menu item input")
+	ErrCategoryNotFound     = errors.New("category not found")
+)
 
-// when a restaurant manager creates a menu item.
+// CreateMenuItemInput is the JSON body for creating a menu item.
+// Price is minor units (pence or kobo). 500 means 5.00, not 500 pounds.
 type CreateMenuItemInput struct {
 	RestaurantID uint   `json:"restaurant_id"`
 	Name         string `json:"name"`
@@ -35,46 +41,55 @@ type MenuService interface {
 // Hold the dependencies used by the menu service.
 type menuService struct {
 	menuRepo          repository.MenuRepository
+	categoryRepo      repository.CategoryRepository
 	restaurantService RestaurantService
 }
 
-func NewMenuService(repo repository.MenuRepository, restaurants RestaurantService) MenuService {
-	return &menuService{menuRepo: repo, restaurantService: restaurants}
+func NewMenuService(
+	repo repository.MenuRepository,
+	categories repository.CategoryRepository,
+	restaurants RestaurantService,
+) MenuService {
+	return &menuService{
+		menuRepo:          repo,
+		categoryRepo:      categories,
+		restaurantService: restaurants,
+	}
 }
 
 // Creating a new menu item after validating the input and restaurant ownership.
 func (s *menuService) CreateMenuItem(ctx context.Context, actorID uint, role models.Role,
 	input CreateMenuItemInput,
 ) (*models.MenuItem, error) {
-	//First step, is to remove spaces around the name.
 	input.Name = strings.TrimSpace(input.Name)
-	//Second step: Check that a name was provided
+	input.Description = strings.TrimSpace(input.Description)
+	input.ImageURL = strings.TrimSpace(input.ImageURL)
+
 	if input.Name == "" {
-		return nil, fmt.Errorf(
-			"%w: menu item name is required", ErrInvalidMenuItemInput)
+		return nil, fmt.Errorf("%w: menu item name is required", ErrInvalidMenuItemInput)
 	}
-	//Third Step is to check that price is positive
 	if input.Price <= 0 {
 		return nil, fmt.Errorf("%w: price must be greater than zero", ErrInvalidMenuItemInput)
 	}
-
-	// Fourth step is to check the restaurant ID
 	if input.RestaurantID == 0 {
 		return nil, fmt.Errorf("%w: restaurant ID is required", ErrInvalidMenuItemInput)
 	}
-
-	// Fifth step requires a category ID.
 	if input.CategoryID == 0 {
 		return nil, fmt.Errorf("%w: category ID is required", ErrInvalidMenuItemInput)
 	}
 
-	// Sixth step is to check that the authenticated user is allowed to manage this restaurant
 	err := s.restaurantService.CheckOwnership(ctx, input.RestaurantID, actorID, role)
 	if err != nil {
 		return nil, err
 	}
 
-	// Seventh step is to prepare the menu item for saving
+	if _, err := s.categoryRepo.FindByID(ctx, input.CategoryID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, err
+	}
+
 	item := &models.MenuItem{
 		RestaurantID: input.RestaurantID,
 		CategoryID:   input.CategoryID,
@@ -85,11 +100,9 @@ func (s *menuService) CreateMenuItem(ctx context.Context, actorID uint, role mod
 		Available:    true,
 	}
 
-	// Eighth step is to save the item in PostgreSQL
 	err = s.menuRepo.CreateMenuItem(ctx, item)
 	if err != nil {
 		return nil, err
 	}
-	// Ninth step is return the newly created item.
 	return item, nil
 }

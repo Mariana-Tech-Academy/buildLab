@@ -1,11 +1,16 @@
 package handlers
 
 import (
-	"Fhub/auth"
-	"Fhub/service"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"time"
+
+	"Fhub/auth"
+	"Fhub/models"
+	"Fhub/service"
+	"Fhub/utils"
 )
 
 type MenuHandler struct {
@@ -17,52 +22,72 @@ func NewMenuHandler(menuService service.MenuService) *MenuHandler {
 	return &MenuHandler{MenuService: menuService}
 }
 
-// CreateMenuitem received a request to create a new menu item.
-func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
+type menuItemResponse struct {
+	ID           uint      `json:"id"`
+	RestaurantID uint      `json:"restaurant_id"`
+	CategoryID   uint      `json:"category_id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	Price        int64     `json:"price"`
+	ImageURL     string    `json:"image_url"`
+	Available    bool      `json:"available"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
 
-	//First step is to get the authenticated user's information from the JWT.
+func newMenuItemResponse(item *models.MenuItem) menuItemResponse {
+	return menuItemResponse{
+		ID:           item.ID,
+		RestaurantID: item.RestaurantID,
+		CategoryID:   item.CategoryID,
+		Name:         item.Name,
+		Description:  item.Description,
+		Price:        item.Price,
+		ImageURL:     item.ImageURL,
+		Available:    item.Available,
+		CreatedAt:    item.CreatedAt,
+		UpdatedAt:    item.UpdatedAt,
+	}
+}
+
+// CreateMenuItem receives a request to create a new menu item.
+// Price in the JSON body is minor units (pence or kobo): 500 is 5.00, not 500 pounds.
+func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
-		http.Error(w, "Unathorized", http.StatusUnauthorized)
+		utils.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	//Second step is to prepare a variable to hold the JSON request data.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	var input service.CreateMenuItemInput
-
-	//Third step is to convert the JSON request body into the input struct.
-	err = json.NewDecoder(r.Body).Decode(&input)
-	if err != nil {
-		http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	//Fourth Step is to send the request to the menu service, the service validates
-	//the information and checks restaurant ownership.
 	item, err := h.MenuService.CreateMenuItem(r.Context(), claims.UserID, claims.Role, input)
-
-	//Fifth step is to handle any erros returned by the service.
 	if err != nil {
-
-		//It returns 400 if the menu item infromation is invalid.
-		if errors.Is(err, service.ErrInvalidMenuItemInput) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// It returns 403 if the user does not manage the restaurant.
-		if errors.Is(err, service.ErrRestaurantForbidden) {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-
-		// It returns 500 if an unexpected server error occurs.
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeMenuError(w, err)
 		return
 	}
-	// Sixt step is to return the HTTP 201 created when the menu item is saved.
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
 
-	//Seventh step is to return the created menu item as JSON.
-	json.NewEncoder(w).Encode(item)
+	utils.Success(w, http.StatusCreated, "menu item created", newMenuItemResponse(item))
+}
+
+func writeMenuError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidMenuItemInput):
+		utils.Error(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, service.ErrRestaurantNotFound):
+		utils.Error(w, http.StatusNotFound, "restaurant not found")
+	case errors.Is(err, service.ErrCategoryNotFound):
+		utils.Error(w, http.StatusNotFound, "category not found")
+	case errors.Is(err, service.ErrRestaurantForbidden):
+		utils.Error(w, http.StatusForbidden, "you do not have permission to modify this restaurant")
+	default:
+		log.Printf("create menu item: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+	}
 }
