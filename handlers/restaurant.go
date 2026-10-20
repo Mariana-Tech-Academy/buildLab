@@ -37,6 +37,10 @@ type createRestaurantRequest struct {
 	ClosingTime string `json:"closing_time"`
 }
 
+type updateRestaurantStatusRequest struct {
+	Status models.RestaurantStatus `json:"status"`
+}
+
 type restaurantResponse struct {
 	ID          uint                    `json:"id"`
 	ManagerID   uint                    `json:"manager_id"`
@@ -210,6 +214,36 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 	utils.Success(w, http.StatusOK, "restaurant updated successfully", newRestaurantResponse(restaurant))
 }
 
+func (h *RestaurantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req updateRestaurantStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	restaurant, err := h.RestaurantService.SetRestaurantStatus(r.Context(), uint(restaurantID), claims.UserID, claims.Role, req.Status)
+	if err != nil {
+		writeRestaurantError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "restaurant status updated successfully", newRestaurantResponse(restaurant))
+}
+
 func writeRestaurantError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrRestaurantNotFound):
@@ -224,8 +258,8 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 	}
 }
 
-// restaurantSummary is one restaraunt in the browse list
-// only includes what the customers need to see
+// restaurantSummary is one restaurant in the browse list.
+// It only includes what customers need to see.
 type restaurantSummary struct {
 	ID          uint   `json:"id"`
 	Name        string `json:"name"`
@@ -272,10 +306,14 @@ func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Reque
 		utils.Error(w, http.StatusBadRequest, "limit must be a positive whole number")
 		return
 	}
+	if limit > 50 {
+		utils.Error(w, http.StatusBadRequest, "limit must be between 1 and 50")
+		return
+	}
 
 	result, err := h.RestaurantService.ListActive(r.Context(), page, limit)
 	if err != nil {
-		log.Printf("list restaurants %V", err)
+		log.Printf("list restaurants: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "could not load restaurants")
 		return
 	}
@@ -299,5 +337,4 @@ func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Reque
 		Limit:       result.Limit,
 		Total:       result.Total,
 	})
-
 }
