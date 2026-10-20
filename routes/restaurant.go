@@ -21,7 +21,7 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	// public routes: GET /restaurants, GET /restaurants/{id}
 	
 	router.HandleFunc("/restaurants/{id:[0-9]+}", restaurantHandler.GetRestaurantsDetails).Methods(http.MethodGet)
-	
+
 	
 
 	// manager routes: POST /restaurants, PUT /restaurants/{id}, PATCH /restaurants/{id}/status
@@ -30,13 +30,8 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 	manager.HandleFunc("/restaurants", restaurantHandler.CreateRestaurant).Methods("POST")
 
-	manager.HandleFunc(
-		"/restaurants/{id}/image",
-		restaurantHandler.UploadRestaurantImage,
-	).Methods(http.MethodPut)
+	manager.HandleFunc("/restaurants/{id}/image",restaurantHandler.UploadRestaurantImage,).Methods(http.MethodPut)
 
 	// Update restaurant details and opening hours
-	manager.HandleFunc(
-		"/restaurants/{id}",
-		restaurantHandler.UpdateRestaurant,).Methods(http.MethodPut)
+	manager.HandleFunc("/restaurants/{id}",restaurantHandler.UpdateRestaurant,).Methods(http.MethodPut)
 }

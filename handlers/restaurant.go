@@ -73,7 +73,7 @@ func newRestaurantResponse(restaurant *models.Restaurant) restaurantResponse {
 	}
 }
 
-var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
+var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)  //Pattern to validate UK phone numbers, either starting with 0 or +44 followed by 10 digits
 
 func (req *createRestaurantRequest) validate() map[string]string {
 	errs := map[string]string{}
@@ -82,7 +82,7 @@ func (req *createRestaurantRequest) validate() map[string]string {
 	req.Description = strings.TrimSpace(req.Description)
 	req.Address = strings.TrimSpace(req.Address)
 	req.Email = strings.TrimSpace(req.Email)
-	req.Phone = strings.NewReplacer(" ", "", "-", "").Replace(req.Phone)
+	req.Phone = strings.NewReplacer(" ", "", "-", "").Replace(req.Phone) //
 	req.OpeningTime = strings.TrimSpace(req.OpeningTime)
 	req.ClosingTime = strings.TrimSpace(req.ClosingTime)
 
