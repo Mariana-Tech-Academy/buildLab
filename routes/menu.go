@@ -1,13 +1,14 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
 	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
-	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -16,20 +17,19 @@ import (
 func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewMenuRepository(db)
 	restaurantRepo := repository.NewRestaurantRepository(db)
-	restaurants := service.NewRestaurantService(restaurantRepo)
-	menuService := service.NewMenuService(repo, restaurants)
+	restaurantService := service.NewRestaurantService(restaurantRepo)
+	categoryRepo := repository.NewCategoryRepository(db)
+	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
-	// Public menu routes will be added separately.
+	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
 
-	// Manager and admin routes: PUT /menu/{id}, DELETE /menu/{id}.
+	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
 	// The service must also check the item belongs to the calling manager's restaurant.
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	// Send the dit requests to the update handler
+	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
 	manager.HandleFunc("/menu/{id}", menuHandler.UpdateMenuItem).Methods(http.MethodPut)
-
-	// Send delete requests to the delete handler
 	manager.HandleFunc("/menu/{id}", menuHandler.DeleteMenuItem).Methods(http.MethodDelete)
 }

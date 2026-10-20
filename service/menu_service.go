@@ -1,113 +1,178 @@
 package service
 
 import (
-	"Fhub/models"
-	"Fhub/repository"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"Fhub/models"
+	"Fhub/repository"
+
 	"gorm.io/gorm"
 )
 
-// Defines ErrMenuItemNotFound and ErrInvalidMenuItem. The handler recognises these and chooses a HTTP response.
 var (
-	ErrMenuItemNotFound = errors.New("menu item not found")
-	ErrInvalidMenuItem  = errors.New("invalid menu item detaisl")
+	ErrInvalidMenuItemInput = errors.New("invalid menu item input")
+	ErrMenuItemNotFound     = errors.New("menu item not found")
+	ErrCategoryNotFound     = errors.New("category not found")
 )
 
-// UpdateMenuItemInput contains the fields a manager can edit. Pointer fields distinguish between not supplied/supplied from empty value
+// CreateMenuItemInput is the JSON body for creating a menu item.
+// Price is minor units (pence or kobo). 500 means 5.00, not 500 pounds.
+type CreateMenuItemInput struct {
+	RestaurantID uint   `json:"restaurant_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Price        int64  `json:"price"`
+	ImageURL     string `json:"image_url"`
+	CategoryID   uint   `json:"category_id"`
+}
+
+// UpdateMenuItemInput contains the fields a manager can edit.
+// Pointer fields distinguish omitted fields from empty values.
+// Price is minor units (pence or kobo). 1250 means 12.50.
 type UpdateMenuItemInput struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	Price       *int64  `json:"price"`
 	ImageURL    *string `json:"image_url"`
 	CategoryID  *uint   `json:"category_id"`
+	Available   *bool   `json:"available"`
 }
 
-// MenuService lists the update and delete operations available to the handler.
 type MenuService interface {
+	CreateMenuItem(
+		ctx context.Context,
+		actorID uint,
+		role models.Role,
+		input CreateMenuItemInput,
+	) (*models.MenuItem, error)
 	UpdateMenuItem(ctx context.Context, itemID, actorID uint, role models.Role, input UpdateMenuItemInput) (*models.MenuItem, error)
 	DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error
 }
 
-// Stores the dependencies needed to perform menu item operations.
 type menuService struct {
-	menuRepo repository.MenuRepository
-	// Provided the existing restaurant owenership check
+	menuRepo          repository.MenuRepository
+	categoryRepo      repository.CategoryRepository
 	restaurantService RestaurantService
 }
 
-// Receives dependencies and stores them in a new menuService.
-func NewMenuService(repo repository.MenuRepository, restaurants RestaurantService) MenuService {
-
+func NewMenuService(
+	repo repository.MenuRepository,
+	categories repository.CategoryRepository,
+	restaurants RestaurantService,
+) MenuService {
 	return &menuService{
 		menuRepo:          repo,
+		categoryRepo:      categories,
 		restaurantService: restaurants,
 	}
 }
 
-// Allows only managers and admins. Other roles receive ErrRestaurantForbidden.
+func (s *menuService) CreateMenuItem(ctx context.Context, actorID uint, role models.Role,
+	input CreateMenuItemInput,
+) (*models.MenuItem, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
+	input.ImageURL = strings.TrimSpace(input.ImageURL)
+
+	if input.Name == "" {
+		return nil, fmt.Errorf("%w: menu item name is required", ErrInvalidMenuItemInput)
+	}
+	if input.Price <= 0 {
+		return nil, fmt.Errorf("%w: price must be greater than zero", ErrInvalidMenuItemInput)
+	}
+	if input.RestaurantID == 0 {
+		return nil, fmt.Errorf("%w: restaurant ID is required", ErrInvalidMenuItemInput)
+	}
+	if input.CategoryID == 0 {
+		return nil, fmt.Errorf("%w: category ID is required", ErrInvalidMenuItemInput)
+	}
+
+	err := s.restaurantService.CheckOwnership(ctx, input.RestaurantID, actorID, role)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.categoryExists(ctx, input.CategoryID); err != nil {
+		return nil, err
+	}
+
+	item := &models.MenuItem{
+		RestaurantID: input.RestaurantID,
+		CategoryID:   input.CategoryID,
+		Name:         input.Name,
+		Description:  input.Description,
+		Price:        input.Price,
+		ImageURL:     input.ImageURL,
+		Available:    true,
+	}
+
+	err = s.menuRepo.CreateMenuItem(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
 func (s *menuService) UpdateMenuItem(ctx context.Context, itemID, actorID uint, role models.Role, input UpdateMenuItemInput) (*models.MenuItem, error) {
 	if role != models.RoleManager && role != models.RoleAdmin {
 		return nil, ErrRestaurantForbidden
 	}
-	//Rejects item ID 0
 	if itemID == 0 {
-		return nil, fmt.Errorf("%w item ID must be greater than zero", ErrInvalidMenuItem)
+		return nil, fmt.Errorf("%w: item ID must be greater than zero", ErrInvalidMenuItemInput)
 	}
-	//Find the existing item through the repository. If it does not exist, return an error.
-	item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
 
-	//Translate the databaase error into our service error.
+	item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrMenuItemNotFound
 	}
-	// Stop if another database error occured
 	if err != nil {
 		return nil, err
 	}
-	// Check owenership using the restaurantID from the menu item and the actorID. If the actor is not the owner, return an error.
+
 	err = s.restaurantService.CheckOwnership(ctx, item.RestaurantID, actorID, role)
 	if err != nil {
 		return nil, err
 	}
-	// Rejects requests containing none of the editable fields.
-	if input.Name == nil && input.Description == nil && input.Price == nil && input.ImageURL == nil && input.CategoryID == nil {
-		return nil, fmt.Errorf("%w: at least one field must be provided", ErrInvalidMenuItem)
+
+	if input.Name == nil && input.Description == nil && input.Price == nil && input.ImageURL == nil && input.CategoryID == nil && input.Available == nil {
+		return nil, fmt.Errorf("%w: at least one field must be provided", ErrInvalidMenuItemInput)
 	}
-	// Trim surrounding spaces from a supplied name and reject a blank name.
+
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
 		if name == "" {
-			return nil, fmt.Errorf("%w: name cannot be empty", ErrInvalidMenuItem)
+			return nil, fmt.Errorf("%w: name cannot be empty", ErrInvalidMenuItemInput)
 		}
 		item.Name = name
 	}
-	// Updates a supplied description. An empty description is allowed.
 	if input.Description != nil {
 		item.Description = strings.TrimSpace(*input.Description)
 	}
-	// Rejects prices of zero or less, then assigns a valid price. 1250 represents £12.50.
 	if input.Price != nil {
 		if *input.Price <= 0 {
-			return nil, fmt.Errorf("%w: the price must be greater than zero", ErrInvalidMenuItem)
+			return nil, fmt.Errorf("%w: the price must be greater than zero", ErrInvalidMenuItemInput)
 		}
 		item.Price = *input.Price
 	}
-	// Updatesor clears the image URL. This stores a string
 	if input.ImageURL != nil {
 		item.ImageURL = strings.TrimSpace(*input.ImageURL)
 	}
-	// Rejects category ID 0, then assigns a positive category ID.
 	if input.CategoryID != nil {
 		if *input.CategoryID == 0 {
-			return nil, fmt.Errorf("%w: category ID must be greater than zero", ErrInvalidMenuItem)
+			return nil, fmt.Errorf("%w: category ID must be greater than zero", ErrInvalidMenuItemInput)
+		}
+		if err := s.categoryExists(ctx, *input.CategoryID); err != nil {
+			return nil, err
 		}
 		item.CategoryID = *input.CategoryID
 	}
-	// Asks the repository to save, handles errors and returns the updated item.
+	if input.Available != nil {
+		item.Available = *input.Available
+	}
+
 	err = s.menuRepo.UpdateMenuItem(ctx, item)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrMenuItemNotFound
@@ -118,15 +183,14 @@ func (s *menuService) UpdateMenuItem(ctx context.Context, itemID, actorID uint, 
 	return item, nil
 }
 
-// Allows only managers and admins.
 func (s *menuService) DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error {
 	if role != models.RoleManager && role != models.RoleAdmin {
 		return ErrRestaurantForbidden
 	}
-	if itemID == 0 { // Rejects item ID 0.
-		return fmt.Errorf("%w: the item ID must be greater than zero", ErrInvalidMenuItem)
+	if itemID == 0 {
+		return fmt.Errorf("%w: the item ID must be greater than zero", ErrInvalidMenuItemInput)
 	}
-	// Finds the item and handles lookup errors
+
 	item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrMenuItemNotFound
@@ -134,16 +198,23 @@ func (s *menuService) DeleteMenuItem(ctx context.Context, itemID, actorID uint, 
 	if err != nil {
 		return err
 	}
-	// Check that the user may manage this restaurant
+
 	err = s.restaurantService.CheckOwnership(ctx, item.RestaurantID, actorID, role)
 	if err != nil {
 		return err
 	}
-	// Calls the repository’s soft-delete method with the item ID and its stored restaurant ID. Converts not-found errors.
+
 	err = s.menuRepo.DeleteMenuItem(ctx, itemID, item.RestaurantID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrMenuItemNotFound
 	}
-	// nil means success otherwise return the database error
+	return err
+}
+
+func (s *menuService) categoryExists(ctx context.Context, categoryID uint) error {
+	_, err := s.categoryRepo.FindByID(ctx, categoryID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrCategoryNotFound
+	}
 	return err
 }
