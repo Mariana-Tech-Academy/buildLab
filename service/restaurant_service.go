@@ -1,3 +1,4 @@
+
 package service
 
 import (
@@ -56,6 +57,7 @@ type RestaurantService interface {
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
 	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
 	ListActive(ctx context.Context) ([]models.Restaurant, error)
+	SearchActive(ctx context.Context, query string) ([]models.Restaurant, error)
 }
 
 type restaurantService struct {
@@ -65,8 +67,14 @@ type restaurantService struct {
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
 }
+
 func (s *restaurantService) ListActive(ctx context.Context) ([]models.Restaurant, error) {
 	return s.restaurantRepo.ListActive(ctx)
+}
+
+func (s *restaurantService) SearchActive(ctx context.Context, query string) ([]models.Restaurant, error) {
+	query = strings.TrimSpace(query)
+	return s.restaurantRepo.SearchActive(ctx, query)
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
@@ -198,6 +206,7 @@ func (s *restaurantService) UpdateRestaurant(
 	}
 	return restaurant, nil
 }
+
 func (s *restaurantService) SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error) {
 	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"Fhub/models"
 
@@ -15,6 +16,7 @@ type RestaurantRepository interface {
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
 	ListActive(ctx context.Context) ([]models.Restaurant, error)
+	SearchActive(ctx context.Context, query string) ([]models.Restaurant, error)
 }
 
 // PostgresRestaurantRepo implements RestaurantRepository.
@@ -50,6 +52,28 @@ func (r *PostgresRestaurantRepo) ListActive(ctx context.Context) ([]models.Resta
 
 	return restaurants, err
 }
+// SearchActive searches active restaurants by name or location.
+func (r *PostgresRestaurantRepo) SearchActive(
+	ctx context.Context,
+	query string,
+) ([]models.Restaurant, error) {
+	var restaurants []models.Restaurant
+	searchTerm := "%" + strings.TrimSpace(query) + "%"
+
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.RestaurantStatusActive).
+		Where(
+			"LOWER(name) LIKE LOWER(?) OR LOWER(address) LIKE LOWER(?) OR LOWER(city) LIKE LOWER(?) OR LOWER(state) LIKE LOWER(?)",
+			searchTerm,
+			searchTerm,
+			searchTerm,
+			searchTerm,
+		).
+		Find(&restaurants).Error
+
+	return restaurants, err
+}
+
 
 // Update saves restaurant changes to the database.
 func (r *PostgresRestaurantRepo) Update(ctx context.Context, restaurant *models.Restaurant) error {

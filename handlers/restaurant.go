@@ -270,3 +270,29 @@ func (h *RestaurantHandler) ListActive(w http.ResponseWriter, r *http.Request) {
 
 	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", responses)
 }
+func (h *RestaurantHandler) SearchActive(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	if query == "" {
+		h.ListActive(w, r)
+		return
+	}
+
+	restaurants, err := h.RestaurantService.SearchActive(r.Context(), query)
+	if err != nil {
+		utils.Error(w, http.StatusInternalServerError, "could not search restaurants")
+		return
+	}
+
+	responses := make([]restaurantResponse, 0, len(restaurants))
+	for i := range restaurants {
+		responses = append(responses, newRestaurantResponse(&restaurants[i]))
+	}
+
+	if len(responses) == 0 {
+		utils.Success(w, http.StatusOK, "No restaurants found. Try another name or location.", responses)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", responses)
+}
