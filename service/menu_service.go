@@ -95,7 +95,7 @@ func (s *menuService) CreateMenuItem(ctx context.Context, actorID uint, role mod
 		return nil, err
 	}
 
-	if err := s.categoryExists(ctx, input.CategoryID); err != nil {
+	if err := s.categoryExists(ctx, input.CategoryID, input.RestaurantID); err != nil {
 		return nil, err
 	}
 
@@ -164,7 +164,7 @@ func (s *menuService) UpdateMenuItem(ctx context.Context, itemID, actorID uint, 
 		if *input.CategoryID == 0 {
 			return nil, fmt.Errorf("%w: category ID must be greater than zero", ErrInvalidMenuItemInput)
 		}
-		if err := s.categoryExists(ctx, *input.CategoryID); err != nil {
+		if err := s.categoryExists(ctx, *input.CategoryID, item.RestaurantID); err != nil {
 			return nil, err
 		}
 		item.CategoryID = *input.CategoryID
@@ -211,10 +211,16 @@ func (s *menuService) DeleteMenuItem(ctx context.Context, itemID, actorID uint, 
 	return err
 }
 
-func (s *menuService) categoryExists(ctx context.Context, categoryID uint) error {
-	_, err := s.categoryRepo.FindByID(ctx, categoryID)
+func (s *menuService) categoryExists(ctx context.Context, categoryID, restaurantID uint) error {
+	category, err := s.categoryRepo.FindByID(ctx, categoryID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrCategoryNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if category.RestaurantID != restaurantID {
+		return ErrCategoryNotFound
+	}
+	return nil
 }
