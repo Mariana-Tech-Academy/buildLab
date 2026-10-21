@@ -77,7 +77,7 @@ func newRestaurantResponse(restaurant *models.Restaurant) restaurantResponse {
 	}
 }
 
-var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
+var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`) //Pattern to validate UK phone numbers, either starting with 0 or +44 followed by 10 digits
 
 func (req *createRestaurantRequest) validate() map[string]string {
 	errs := map[string]string{}
@@ -86,7 +86,7 @@ func (req *createRestaurantRequest) validate() map[string]string {
 	req.Description = strings.TrimSpace(req.Description)
 	req.Address = strings.TrimSpace(req.Address)
 	req.Email = strings.TrimSpace(req.Email)
-	req.Phone = strings.NewReplacer(" ", "", "-", "").Replace(req.Phone)
+	req.Phone = strings.NewReplacer(" ", "", "-", "").Replace(req.Phone) //
 	req.OpeningTime = strings.TrimSpace(req.OpeningTime)
 	req.ClosingTime = strings.TrimSpace(req.ClosingTime)
 
@@ -185,7 +185,7 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64) //
 	if err != nil || restaurantID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
@@ -268,6 +268,35 @@ type restaurantSummary struct {
 	City        string `json:"city"`
 	OpeningTime string `json:"opening_time"`
 	ClosingTime string `json:"closing_time"`
+}
+
+// restaurantDetailResponse is the public page for one active restaurant.
+type restaurantDetailResponse struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Address     string `json:"address"`
+	City        string `json:"city"`
+	State       string `json:"state"`
+	Phone       string `json:"phone"`
+	ImageURL    string `json:"image_url"`
+	OpeningTime string `json:"opening_time"`
+	ClosingTime string `json:"closing_time"`
+}
+
+func newRestaurantDetailResponse(restaurant *models.Restaurant) restaurantDetailResponse {
+	return restaurantDetailResponse{
+		ID:          restaurant.ID,
+		Name:        restaurant.Name,
+		Description: restaurant.Description,
+		Address:     restaurant.Address,
+		City:        restaurant.City,
+		State:       restaurant.State,
+		Phone:       restaurant.Phone,
+		ImageURL:    restaurant.ImageURL,
+		OpeningTime: restaurant.OpeningTime,
+		ClosingTime: restaurant.ClosingTime,
+	}
 }
 
 // will give the full response for one page
@@ -385,4 +414,29 @@ func (h *RestaurantHandler) SearchActive(w http.ResponseWriter, r *http.Request)
 		result.Limit,
 		result.Total,
 	))
+}
+
+// GetRestaurantDetails handles GET /api/restaurants/{id}.
+func (h *RestaurantHandler) GetRestaurantDetails(w http.ResponseWriter, r *http.Request) {
+	id, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	restaurant, err := h.RestaurantService.GetActiveRestaurant(r.Context(), id)
+	if err != nil {
+		writeRestaurantError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "restaurant retrieved successfully", newRestaurantDetailResponse(restaurant))
+}
+
+// muxID parses the {id} path variable as a positive integer.
+func muxID(w http.ResponseWriter, r *http.Request) (uint, bool) {
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || id == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid id")
+		return 0, false
+	}
+	return uint(id), true
 }

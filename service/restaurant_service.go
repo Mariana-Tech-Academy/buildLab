@@ -71,6 +71,7 @@ type RestaurantService interface {
 	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
 	ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error)
 	SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error)
+	GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error)
 }
 
 type restaurantService struct {
@@ -351,4 +352,19 @@ func (s *restaurantService) ListActive(ctx context.Context, page, limit int) (*R
 		Limit:       limit,
 		Total:       total,
 	}, nil
+}
+
+// GetActiveRestaurant returns an active restaurant. Missing and non-active restaurants are not found.
+func (s *restaurantService) GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error) {
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRestaurantNotFound
+		}
+		return nil, err
+	}
+	if restaurant.Status != models.RestaurantStatusActive {
+		return nil, ErrRestaurantNotFound
+	}
+	return restaurant, nil
 }
