@@ -295,23 +295,19 @@ func parsePositiveIntQuery(r *http.Request, key string) (int, bool) {
 
 // ListRestaurants handles GET
 func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Request) {
-	page, ok := parsePositiveIntQuery(r, "page")
-	if !ok {
-		utils.Error(w, http.StatusBadRequest, "page must be a positive whole number")
-		return
-	}
+	// Read and validate pagination using the shared helper.
 
-	limit, ok := parsePositiveIntQuery(r, "limit")
-	if !ok {
-		utils.Error(w, http.StatusBadRequest, "limit must be a positive whole number")
+	pagination, err := utils.ParseListPagination(r.URL.Query())
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if limit > 50 {
-		utils.Error(w, http.StatusBadRequest, "limit must be between 1 and 50")
-		return
-	}
-
-	result, err := h.RestaurantService.ListActive(r.Context(), page, limit)
+	// Retrieve the requested page.
+	result, err := h.RestaurantService.ListActive(
+		r.Context(),
+		pagination.Page,
+		pagination.Limit,
+	)
 	if err != nil {
 		log.Printf("list restaurants: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "could not load restaurants")
