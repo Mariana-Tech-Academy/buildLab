@@ -18,11 +18,11 @@ type CreateCategoryInput struct {
 
 type CategoryService interface {
 	Create(
-    ctx context.Context,
-    restaurantID, actorID uint,
-    role models.Role,
-    input CreateCategoryInput,
-) (*models.Category, error)
+		ctx context.Context,
+		restaurantID, actorID uint,
+		role models.Role,
+		input CreateCategoryInput,
+	) (*models.Category, error)
 
 	GetByRestaurantID(
 		ctx context.Context,
@@ -48,45 +48,44 @@ func NewCategoryService(
 // Create adds a new category to a restaurant.
 
 func (s *categoryService) Create(
-    ctx context.Context,
-    restaurantID, actorID uint,
-    role models.Role,
-    input CreateCategoryInput,
+	ctx context.Context,
+	restaurantID, actorID uint,
+	role models.Role,
+	input CreateCategoryInput,
 ) (*models.Category, error) {
 
-    // Check restaurant ownership
-    if err := s.restaurantService.CheckOwnership(
-        ctx,
-        restaurantID,
-        actorID,
-        role,
-    ); err != nil {
-        return nil, err
-    }
+	// Check restaurant ownership
+	if err := s.restaurantService.CheckOwnership(
+		ctx,
+		restaurantID,
+		actorID,
+		role,
+	); err != nil {
+		return nil, err
+	}
 
-    // Validate category name
-    name := strings.TrimSpace(input.Name)
+	// Validate category name
+	name := strings.TrimSpace(input.Name)
 
-    if name == "" {
-        return nil, fmt.Errorf(
-            "%w: category name is required",
-            ErrInvalidCategory,
-        )
-    }
+	if name == "" {
+		return nil, fmt.Errorf(
+			"%w: category name is required",
+			ErrInvalidCategory,
+		)
+	}
 
-    // Create category
-    category := &models.Category{
-        RestaurantID: restaurantID,
-        Name:         name,
-    }
+	// Create category
+	category := &models.Category{
+		RestaurantID: restaurantID,
+		Name:         name,
+	}
 
-    if err := s.categoryRepo.Create(ctx, category); err != nil {
-        return nil, err
-    }
+	if err := s.categoryRepo.Create(ctx, category); err != nil {
+		return nil, err
+	}
 
-    return category, nil
+	return category, nil
 }
-
 
 // GetByRestaurantID retrieves categories for a restaurant.
 func (s *categoryService) GetByRestaurantID(
