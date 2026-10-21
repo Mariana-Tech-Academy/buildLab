@@ -70,6 +70,7 @@ type RestaurantService interface {
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
 	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
 	ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error)
+	SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error)
 }
 
 type restaurantService struct {
@@ -78,6 +79,25 @@ type restaurantService struct {
 
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
+}
+
+func (s *restaurantService) SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error) {
+	page, limit, offset, err := restaurantPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	restaurants, total, err := s.restaurantRepo.SearchActive(ctx, strings.TrimSpace(query), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RestaurantPage{
+		Restaurants: restaurants,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}, nil
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
@@ -299,21 +319,26 @@ func validateOpeningHours(openingTime, closingTime string) error {
 	return nil
 }
 
-// ListActive will return a single page of active restaurants
-// a page or limit of 0 means "not given", so defaults are used
-func (s *restaurantService) ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error) {
+func restaurantPageBounds(page, limit int) (int, int, int, error) {
 	if page < 1 {
 		page = 1
 	}
-
 	if limit < 1 {
 		limit = defaultRestaurantPageSize
 	}
 	if limit > maxRestaurantPageSize {
-		return nil, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidRestaurant, maxRestaurantPageSize)
+		return 0, 0, 0, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidRestaurant, maxRestaurantPageSize)
 	}
+	return page, limit, (page - 1) * limit, nil
+}
 
-	offset := (page - 1) * limit
+// ListActive returns one page of active restaurants.
+// A page or limit of 0 means "not given", so defaults are used.
+func (s *restaurantService) ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error) {
+	page, limit, offset, err := restaurantPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
 
 	restaurants, total, err := s.restaurantRepo.ListActive(ctx, limit, offset)
 	if err != nil {

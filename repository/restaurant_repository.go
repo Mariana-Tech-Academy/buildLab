@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"Fhub/models"
 	"gorm.io/gorm"
@@ -14,6 +15,7 @@ type RestaurantRepository interface {
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
 	ListActive(ctx context.Context, limit, offset int) ([]models.Restaurant, int64, error)
+	SearchActive(ctx context.Context, query string, limit, offset int) ([]models.Restaurant, int64, error)
 }
 
 // PostgresRestaurantRepo connects the repository to PostgreSQL.
@@ -91,5 +93,45 @@ func (r *PostgresRestaurantRepo) ListActive(ctx context.Context, limit, offset i
 	}
 
 	return restaurants, total, nil
+}
 
+// SearchActive returns one page of active restaurants whose name or location matches query.
+func (r *PostgresRestaurantRepo) SearchActive(
+	ctx context.Context,
+	query string,
+	limit, offset int,
+) ([]models.Restaurant, int64, error) {
+	pattern := likeContains(query)
+	match := "LOWER(name) LIKE LOWER(?) OR LOWER(address) LIKE LOWER(?) OR LOWER(city) LIKE LOWER(?) OR LOWER(state) LIKE LOWER(?)"
+
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Restaurant{}).
+		Where("status = ?", models.RestaurantStatusActive).
+		Where(match, pattern, pattern, pattern, pattern).
+		Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var restaurants []models.Restaurant
+	err = r.db.WithContext(ctx).
+		Where("status = ?", models.RestaurantStatusActive).
+		Where(match, pattern, pattern, pattern, pattern).
+		Order("name ASC, id ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&restaurants).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return restaurants, total, nil
+}
+
+// likeContains wraps a user query for a case-insensitive substring match.
+// Backslash, percent, and underscore are escaped so they are not LIKE wildcards.
+func likeContains(query string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.TrimSpace(query))
+	return "%" + escaped + "%"
 }
