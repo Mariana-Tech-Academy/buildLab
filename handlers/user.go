@@ -5,7 +5,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/mail"
+	"regexp"
 	"strings"
+	"time"
 
 	"Fhub/auth"
 	"Fhub/middleware"
@@ -138,14 +141,14 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	input.Email = strings.TrimSpace(input.Email)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 
 	if input.Email == "" || input.Password == "" {
 		utils.Error(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
 
-	result, err := h.UserService.Login(input.Email, input.Password)
+	result, err := h.UserService.Login(r.Context(), input.Email, input.Password)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
@@ -170,4 +173,195 @@ func writeUserError(w http.ResponseWriter, err error) {
 		log.Printf("user handler: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
+}
+
+type registerRequest struct {
+	FirstName       string `json:"first_name"`
+	LastName        string `json:"last_name"`
+	Email           string `json:"email"`
+	Phone           string `json:"phone"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+var ukPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
+
+func (req *registerRequest) validate() map[string]string {
+	errs := map[string]string{}
+
+	req.FirstName = strings.TrimSpace(req.FirstName)
+	req.LastName = strings.TrimSpace(req.LastName)
+	req.Email = strings.TrimSpace(req.Email)
+	req.Phone = strings.NewReplacer(" ", "", "-", "").Replace(req.Phone)
+
+	if req.FirstName == "" {
+		errs["first_name"] = "first name is required"
+	}
+	if req.LastName == "" {
+		errs["last_name"] = "last name is required"
+	}
+
+	if req.Email == "" {
+		errs["email"] = "email is required"
+	} else if !isValidEmail(req.Email) {
+		errs["email"] = "email must be a valid email address"
+	}
+
+	if req.Phone == "" {
+		errs["phone"] = "phone is required"
+	} else if !ukPhoneRegex.MatchString(req.Phone) {
+		errs["phone"] = "phone number must be a valid UK number, e.g. 07123456789 or +447123456789"
+	}
+
+	if req.Password == "" {
+		errs["password"] = "password is required"
+	} else if !utils.IsStrongPassword(req.Password) {
+		errs["password"] = "password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number"
+	}
+
+	if req.ConfirmPassword == "" {
+		errs["confirm_password"] = "please confirm your password"
+	} else if req.ConfirmPassword != req.Password {
+		errs["confirm_password"] = "passwords do not match"
+	}
+
+	return errs
+}
+
+func isValidEmail(email string) bool {
+	addr, err := mail.ParseAddress(email)
+	return err == nil && addr.Address == email
+}
+
+type registerUserResponse struct {
+	ID        uint        `json:"id"`
+	FirstName string      `json:"first_name"`
+	LastName  string      `json:"last_name"`
+	Email     string      `json:"email"`
+	Phone     string      `json:"phone"`
+	Role      models.Role `json:"role"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
+	var req registerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if errs := req.validate(); len(errs) > 0 {
+		utils.JSON(w, http.StatusUnprocessableEntity, utils.Response{
+			Success: false,
+			Message: "validation failed",
+			Data:    errs,
+		})
+		return
+	}
+
+	user, err := h.UserService.Register(r.Context(), service.RegisterInput{
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Email:     req.Email,
+		Phone:     req.Phone,
+		Password:  req.Password,
+	})
+	if errors.Is(err, service.ErrEmailTaken) {
+		utils.Error(w, http.StatusConflict, "email is already taken")
+		return
+	}
+	if err != nil {
+		log.Printf("register user: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+
+	utils.Success(w, http.StatusCreated, "account created successfully", registerUserResponse{
+		ID:        user.ID,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		Email:     user.Email,
+		Phone:     user.Phone,
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt,
+	})
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword    string `json:"current_password"`
+	NewPassword        string `json:"new_password"`
+	ConfirmNewPassword string `json:"confirm_new_password"`
+}
+
+func (req *ChangePasswordRequest) validate() map[string]string {
+	errs := map[string]string{}
+
+	if req.CurrentPassword == "" {
+		errs["current_password"] = "current password is required"
+	}
+	if req.NewPassword == "" {
+		errs["new_password"] = "new password is required"
+	} else if !utils.IsStrongPassword(req.NewPassword) {
+		errs["new_password"] = "password must be a minimum of 8 characters and include an uppercase letter, a lowercase letter and a number"
+	}
+	if req.ConfirmNewPassword == "" {
+		errs["confirm_new_password"] = "please confirm your new password"
+	} else if req.ConfirmNewPassword != req.NewPassword {
+		errs["confirm_new_password"] = "passwords do not match"
+	}
+	if req.CurrentPassword != "" && req.NewPassword != "" && req.CurrentPassword == req.NewPassword {
+		errs["new_password"] = "new password must be different from the current password"
+	}
+
+	return errs
+}
+
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if errs := req.validate(); len(errs) > 0 {
+		utils.JSON(w, http.StatusUnprocessableEntity, utils.Response{
+			Success: false,
+			Message: "validation failed",
+			Data:    errs,
+		})
+		return
+	}
+
+	err = h.UserService.ChangePassword(
+		r.Context(),
+		claims.UserID,
+		req.CurrentPassword,
+		req.NewPassword,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrIncorrectPassword):
+			utils.Error(w, http.StatusUnauthorized, "incorrect current password")
+		case errors.Is(err, service.ErrValidation):
+			utils.Error(w, http.StatusUnprocessableEntity, err.Error())
+		case errors.Is(err, service.ErrUserNotFound):
+			utils.Error(w, http.StatusNotFound, "user not found")
+		default:
+			log.Printf("change password: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "could not change password")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "password changed successfully", nil)
 }

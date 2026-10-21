@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -14,7 +16,10 @@ import (
 
 func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewMenuRepository(db)
-	menuService := service.NewMenuService(repo)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+	restaurantService := service.NewRestaurantService(restaurantRepo)
+	categoryRepo := repository.NewCategoryRepository(db)
+	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
 	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
@@ -24,5 +29,7 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_, _ = menuHandler, manager
+	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
+	manager.HandleFunc("/menu/{id}", menuHandler.UpdateMenuItem).Methods(http.MethodPut)
+	manager.HandleFunc("/menu/{id}", menuHandler.DeleteMenuItem).Methods(http.MethodDelete)
 }

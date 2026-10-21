@@ -37,6 +37,10 @@ type createRestaurantRequest struct {
 	ClosingTime string `json:"closing_time"`
 }
 
+type updateRestaurantStatusRequest struct {
+	Status models.RestaurantStatus `json:"status"`
+}
+
 type restaurantResponse struct {
 	ID          uint                    `json:"id"`
 	ManagerID   uint                    `json:"manager_id"`
@@ -73,7 +77,7 @@ func newRestaurantResponse(restaurant *models.Restaurant) restaurantResponse {
 	}
 }
 
-var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)  //Pattern to validate UK phone numbers, either starting with 0 or +44 followed by 10 digits
+var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`) //Pattern to validate UK phone numbers, either starting with 0 or +44 followed by 10 digits
 
 func (req *createRestaurantRequest) validate() map[string]string {
 	errs := map[string]string{}
@@ -131,7 +135,7 @@ func (req *createRestaurantRequest) validate() map[string]string {
 	return errs
 }
 
-func (h *RestaurantHandler) CreateRestaurant(w http.ResponseWriter, r *http.Request) {
+func (h *RestaurantHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
 		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
@@ -155,7 +159,7 @@ func (h *RestaurantHandler) CreateRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	restaurant, err := h.RestaurantService.CreateRestaurant(r.Context(), service.CreateRestaurantInput{
+	restaurant, err := h.RestaurantService.Create(r.Context(), service.CreateRestaurantInput{
 		ManagerID:   claims.UserID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -181,7 +185,7 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)  //
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64) //
 	if err != nil || restaurantID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
@@ -210,6 +214,36 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 	utils.Success(w, http.StatusOK, "restaurant updated successfully", newRestaurantResponse(restaurant))
 }
 
+func (h *RestaurantHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req updateRestaurantStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	restaurant, err := h.RestaurantService.SetRestaurantStatus(r.Context(), uint(restaurantID), claims.UserID, claims.Role, req.Status)
+	if err != nil {
+		writeRestaurantError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "restaurant status updated successfully", newRestaurantResponse(restaurant))
+}
+
 func writeRestaurantError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrRestaurantNotFound):
@@ -224,15 +258,143 @@ func writeRestaurantError(w http.ResponseWriter, err error) {
 	}
 }
 
+// restaurantSummary is one restaurant in the browse list.
+// It only includes what customers need to see.
+type restaurantSummary struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	ImageURL    string `json:"image_url"`
+	Address     string `json:"address"`
+	City        string `json:"city"`
+	OpeningTime string `json:"opening_time"`
+	ClosingTime string `json:"closing_time"`
+}
 
-// Get handles GET /api/restaurants/{id} (REST-05).
-func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http.Request) {
-	id, ok := muxID(w, r)   // Extract the restaurant ID from the URL path
-	if !ok {
-		return 
+// will give the full response for one page
+type restaurantListResponse struct {
+	Restaurants []restaurantSummary `json:"restaurants"`
+	Page        int                 `json:"page"`
+	Limit       int                 `json:"limit"`
+	Total       int64               `json:"total"`
+}
+
+// reads a whole number from the URL
+// returns 0 if the value is missing, and false if the value is not positive whole number
+func parsePositiveIntQuery(r *http.Request, key string) (int, bool) {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return 0, true
 	}
 
-	restaurant, err := h.RestaurantService.GetActiveRestaurant(r.Context(), id) // Fetch the restaurant details from the service layer
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
+}
+
+func restaurantListPage(r *http.Request) (page, limit int, message string) {
+	page, ok := parsePositiveIntQuery(r, "page")
+	if !ok {
+		return 0, 0, "page must be a positive whole number"
+	}
+
+	limit, ok = parsePositiveIntQuery(r, "limit")
+	if !ok {
+		return 0, 0, "limit must be a positive whole number"
+	}
+	if limit > 50 {
+		return 0, 0, "limit must be between 1 and 50"
+	}
+	return page, limit, ""
+}
+
+func newRestaurantListResponse(restaurants []models.Restaurant, page, limit int, total int64) restaurantListResponse {
+	summaries := make([]restaurantSummary, 0, len(restaurants))
+	for _, restaurant := range restaurants {
+		summaries = append(summaries, restaurantSummary{
+			ID:          restaurant.ID,
+			Name:        restaurant.Name,
+			ImageURL:    restaurant.ImageURL,
+			Address:     restaurant.Address,
+			City:        restaurant.City,
+			OpeningTime: restaurant.OpeningTime,
+			ClosingTime: restaurant.ClosingTime,
+		})
+	}
+
+	return restaurantListResponse{
+		Restaurants: summaries,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}
+}
+
+// ListRestaurants handles GET
+func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Request) {
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.RestaurantService.ListActive(r.Context(), page, limit)
+	if err != nil {
+		log.Printf("list restaurants: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not load restaurants")
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "restaurants retrieved successfully", newRestaurantListResponse(
+		result.Restaurants,
+		result.Page,
+		result.Limit,
+		result.Total,
+	))
+}
+
+func (h *RestaurantHandler) SearchActive(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		h.ListRestaurants(w, r)
+		return
+	}
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.RestaurantService.SearchActive(r.Context(), query, page, limit)
+	if err != nil {
+		log.Printf("search restaurants: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not search restaurants")
+		return
+	}
+
+	message = "restaurants retrieved successfully"
+	if result.Total == 0 {
+		message = "No restaurants found. Try another name or location."
+	}
+
+	utils.Success(w, http.StatusOK, message, newRestaurantListResponse(
+		result.Restaurants,
+		result.Page,
+		result.Limit,
+		result.Total,
+	))
+}
+
+// GetRestaurantsDetails handles GET /api/restaurants/{id}.
+func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http.Request) {
+	id, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	restaurant, err := h.RestaurantService.GetActiveRestaurant(r.Context(), id)
 	if err != nil {
 		utils.Error(w, http.StatusNotFound, "restaurant not found")
 		return
@@ -242,13 +404,10 @@ func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http
 
 // muxID parses the {id} path variable as a positive integer.
 func muxID(w http.ResponseWriter, r *http.Request) (uint, bool) {
-	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)  // Parse the "id" variable from the URL path as an unsigned integer
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid id")
 		return 0, false
 	}
 	return uint(id), true
 }
-
-
-

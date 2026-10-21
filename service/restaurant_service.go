@@ -19,9 +19,7 @@ var (
 	ErrRestaurantNotFound  = errors.New("restaurant not found")
 	ErrRestaurantForbidden = errors.New("you do not own this restaurant")
 	ErrInvalidRestaurant   = errors.New("invalid restaurant details")
-
 )
-
 
 var restaurantPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
 
@@ -51,11 +49,28 @@ type UpdateRestaurantInput struct {
 	ImageURL    *string `json:"-"`
 }
 
+// page settings
+const (
+	defaultRestaurantPageSize = 10
+	maxRestaurantPageSize     = 50
+)
+
+// RestaurantPage is one page of results incl. the details needed to show e.g. "page 1 of 10"
+type RestaurantPage struct {
+	Restaurants []models.Restaurant
+	Page        int
+	Limit       int
+	Total       int64
+}
+
 type RestaurantService interface {
-	CreateRestaurant(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error)
+	Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error)
 	UpdateRestaurant(ctx context.Context, restaurantID, actorID uint, role models.Role, input UpdateRestaurantInput) (*models.Restaurant, error)
 	CheckOwnership(ctx context.Context, restaurantID, actorID uint, role models.Role) error
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
+	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
+	ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error)
+	SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error)
 	GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error)
 }
 
@@ -67,7 +82,26 @@ func NewRestaurantService(repo repository.RestaurantRepository) RestaurantServic
 	return &restaurantService{restaurantRepo: repo}
 }
 
-func (s *restaurantService) CreateRestaurant(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
+func (s *restaurantService) SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error) {
+	page, limit, offset, err := restaurantPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	restaurants, total, err := s.restaurantRepo.SearchActive(ctx, strings.TrimSpace(query), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RestaurantPage{
+		Restaurants: restaurants,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}, nil
+}
+
+func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {
 	restaurant := &models.Restaurant{
 		ManagerID:   input.ManagerID,
 		Name:        input.Name,
@@ -80,7 +114,7 @@ func (s *restaurantService) CreateRestaurant(ctx context.Context, input CreateRe
 		Status:      models.RestaurantStatusPending,
 	}
 
-	if err := s.restaurantRepo.CreateRestaurant(ctx, restaurant); err != nil {
+	if err := s.restaurantRepo.Create(ctx, restaurant); err != nil {
 		return nil, err
 	}
 	return restaurant, nil
@@ -197,6 +231,54 @@ func (s *restaurantService) UpdateRestaurant(
 	return restaurant, nil
 }
 
+func (s *restaurantService) SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error) {
+	if !isValidRestaurantStatus(status) {
+		return nil, fmt.Errorf("%w: status must be one of pending_approval, active, inactive, suspended", ErrInvalidRestaurant)
+	}
+
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrRestaurantNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if role != models.RoleAdmin && restaurant.ManagerID != actorID {
+		return nil, ErrRestaurantForbidden
+	}
+
+	if role != models.RoleAdmin {
+		if restaurant.Status != models.RestaurantStatusActive &&
+			restaurant.Status != models.RestaurantStatusInactive {
+			return nil, fmt.Errorf("%w: only an admin can change this status", ErrInvalidRestaurant)
+		}
+		if status != models.RestaurantStatusActive &&
+			status != models.RestaurantStatusInactive {
+			return nil, fmt.Errorf("%w: managers can only activate or deactivate", ErrInvalidRestaurant)
+		}
+	}
+
+	restaurant.Status = status
+
+	if err := s.restaurantRepo.Update(ctx, restaurant); err != nil {
+		return nil, err
+	}
+	return restaurant, nil
+}
+
+func isValidRestaurantStatus(status models.RestaurantStatus) bool {
+	switch status {
+	case models.RestaurantStatusPending,
+		models.RestaurantStatusActive,
+		models.RestaurantStatusInactive,
+		models.RestaurantStatusSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *restaurantService) UpdateRestaurantImage(
 	ctx context.Context,
 	restaurantID, actorID uint,
@@ -238,16 +320,49 @@ func validateOpeningHours(openingTime, closingTime string) error {
 	return nil
 }
 
-// GetActiveRestaurant returns full details of an Active restaurant; anything else is a 404 for customers (REST-05).
-func (s *restaurantService) GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error) {
-	restaurant, err := s.restaurantRepo.FindByID(ctx,restaurantID)
-	if err != nil {
-		if errors.Is(err, ErrRestaurantNotFound) {
-			return nil, ErrRestaurantNotFound              
-		}
-		return nil, err 
+func restaurantPageBounds(page, limit int) (int, int, int, error) {
+	if page < 1 {
+		page = 1
 	}
-	// Non-Active restaurants are invisible to customers (REST-05).
+	if limit < 1 {
+		limit = defaultRestaurantPageSize
+	}
+	if limit > maxRestaurantPageSize {
+		return 0, 0, 0, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidRestaurant, maxRestaurantPageSize)
+	}
+	return page, limit, (page - 1) * limit, nil
+}
+
+// ListActive returns one page of active restaurants.
+// A page or limit of 0 means "not given", so defaults are used.
+func (s *restaurantService) ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error) {
+	page, limit, offset, err := restaurantPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	restaurants, total, err := s.restaurantRepo.ListActive(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RestaurantPage{
+		Restaurants: restaurants,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}, nil
+}
+
+// GetActiveRestaurant returns an active restaurant. Missing and non-active restaurants are not found.
+func (s *restaurantService) GetActiveRestaurant(ctx context.Context, restaurantID uint) (*models.Restaurant, error) {
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRestaurantNotFound
+		}
+		return nil, err
+	}
 	if restaurant.Status != models.RestaurantStatusActive {
 		return nil, ErrRestaurantNotFound
 	}
