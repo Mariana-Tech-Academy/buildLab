@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"Fhub/auth"
+	"Fhub/models"
 	"Fhub/service"
 	"Fhub/utils"
 
@@ -20,25 +21,66 @@ type CategoryHandler struct {
 
 func NewCategoryHandler(service service.CategoryService) *CategoryHandler {
 	return &CategoryHandler{CategoryService: service}
+}
 
+type categoryMenuItemResponse struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Price       int64  `json:"price"`
+	ImageURL    string `json:"image_url"`
+}
+
+type categoryResponse struct {
+	ID           uint                       `json:"id"`
+	RestaurantID uint                       `json:"restaurant_id"`
+	Name         string                     `json:"name"`
+	MenuItems    []categoryMenuItemResponse `json:"menu_items,omitempty"`
+}
+
+func newCategoryResponse(category *models.Category) categoryResponse {
+	return categoryResponse{
+		ID:           category.ID,
+		RestaurantID: category.RestaurantID,
+		Name:         category.Name,
+	}
+}
+
+func newCategoryListResponse(categories []models.Category) []categoryResponse {
+	out := make([]categoryResponse, 0, len(categories))
+	for _, category := range categories {
+		items := make([]categoryMenuItemResponse, 0, len(category.MenuItems))
+		for _, item := range category.MenuItems {
+			if !item.Available {
+				continue
+			}
+			items = append(items, categoryMenuItemResponse{
+				ID:          item.ID,
+				Name:        item.Name,
+				Description: item.Description,
+				Price:       item.Price,
+				ImageURL:    item.ImageURL,
+			})
+		}
+		out = append(out, categoryResponse{
+			ID:           category.ID,
+			RestaurantID: category.RestaurantID,
+			Name:         category.Name,
+			MenuItems:    items,
+		})
+	}
+	return out
 }
 
 func (h *CategoryHandler) GetCategories(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	vars := mux.Vars(r)
-
 	restaurantID, err := strconv.ParseUint(
-		vars["restaurantId"], 10, 64,
+		mux.Vars(r)["restaurantId"], 10, 64,
 	)
-
 	if err != nil || restaurantID == 0 {
-		http.Error(
-			w,
-			"Invalid restaurant ID",
-			http.StatusBadRequest,
-		)
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
 	}
 
@@ -46,21 +88,12 @@ func (h *CategoryHandler) GetCategories(
 		r.Context(),
 		uint(restaurantID),
 	)
-
 	if err != nil {
-		http.Error(
-			w,
-			"Failed to retrieve categories",
-			http.StatusInternalServerError,
-		)
+		writeCategoryError(w, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(categories); err != nil {
-		return
-	}
+	utils.Success(w, http.StatusOK, "categories retrieved successfully", newCategoryListResponse(categories))
 }
 func (h *CategoryHandler) CreateCategory(
 	w http.ResponseWriter,
@@ -104,7 +137,7 @@ func (h *CategoryHandler) CreateCategory(
 		w,
 		http.StatusCreated,
 		"category created successfully",
-		category,
+		newCategoryResponse(category),
 	)
 }
 

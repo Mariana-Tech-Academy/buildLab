@@ -74,6 +74,14 @@ func (s *categoryService) Create(
 		)
 	}
 
+	taken, err := s.categoryRepo.NameExists(ctx, restaurantID, name)
+	if err != nil {
+		return nil, err
+	}
+	if taken {
+		return nil, fmt.Errorf("%w: category name already exists", ErrInvalidCategory)
+	}
+
 	// Create category
 	category := &models.Category{
 		RestaurantID: restaurantID,
@@ -81,16 +89,22 @@ func (s *categoryService) Create(
 	}
 
 	if err := s.categoryRepo.Create(ctx, category); err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: category name already exists", ErrInvalidCategory)
+		}
 		return nil, err
 	}
 
 	return category, nil
 }
 
-// GetByRestaurantID retrieves categories for a restaurant.
+// GetByRestaurantID retrieves categories for an active restaurant.
 func (s *categoryService) GetByRestaurantID(
 	ctx context.Context,
 	restaurantID uint,
 ) ([]models.Category, error) {
+	if _, err := s.restaurantService.GetActiveRestaurant(ctx, restaurantID); err != nil {
+		return nil, err
+	}
 	return s.categoryRepo.FindByRestaurantID(ctx, restaurantID)
 }

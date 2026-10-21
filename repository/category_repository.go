@@ -13,6 +13,7 @@ type CategoryRepository interface {
 	Create(ctx context.Context, category *models.Category) error
 	FindByID(ctx context.Context, id uint) (*models.Category, error)
 	FindByRestaurantID(ctx context.Context, restaurantID uint) ([]models.Category, error)
+	NameExists(ctx context.Context, restaurantID uint, name string) (bool, error)
 	Update(ctx context.Context, category *models.Category) error
 	Delete(ctx context.Context, id uint, restaurantID uint) error
 }
@@ -58,10 +59,23 @@ func (r *PostgresCategoryRepo) FindByRestaurantID(
 
 	err := r.db.WithContext(ctx).
 		Where("restaurant_id = ?", restaurantID).
-		Preload("MenuItems").
+		Preload("MenuItems", func(db *gorm.DB) *gorm.DB {
+			return db.Where("available = ?", true).Order("name ASC, id ASC")
+		}).
+		Order("name ASC, id ASC").
 		Find(&categories).Error
 
 	return categories, err
+}
+
+// NameExists reports whether this restaurant already has a category with the same name, ignoring case.
+func (r *PostgresCategoryRepo) NameExists(ctx context.Context, restaurantID uint, name string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Category{}).
+		Where("restaurant_id = ? AND LOWER(name) = LOWER(?)", restaurantID, name).
+		Count(&count).Error
+	return count > 0, err
 }
 
 // Update saves changes to an existing category.
