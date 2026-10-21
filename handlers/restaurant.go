@@ -270,6 +270,35 @@ type restaurantSummary struct {
 	ClosingTime string `json:"closing_time"`
 }
 
+// restaurantDetailResponse is the public page for one active restaurant.
+type restaurantDetailResponse struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Address     string `json:"address"`
+	City        string `json:"city"`
+	State       string `json:"state"`
+	Phone       string `json:"phone"`
+	ImageURL    string `json:"image_url"`
+	OpeningTime string `json:"opening_time"`
+	ClosingTime string `json:"closing_time"`
+}
+
+func newRestaurantDetailResponse(restaurant *models.Restaurant) restaurantDetailResponse {
+	return restaurantDetailResponse{
+		ID:          restaurant.ID,
+		Name:        restaurant.Name,
+		Description: restaurant.Description,
+		Address:     restaurant.Address,
+		City:        restaurant.City,
+		State:       restaurant.State,
+		Phone:       restaurant.Phone,
+		ImageURL:    restaurant.ImageURL,
+		OpeningTime: restaurant.OpeningTime,
+		ClosingTime: restaurant.ClosingTime,
+	}
+}
+
 // will give the full response for one page
 type restaurantListResponse struct {
 	Restaurants []restaurantSummary `json:"restaurants"`
@@ -387,8 +416,8 @@ func (h *RestaurantHandler) SearchActive(w http.ResponseWriter, r *http.Request)
 	))
 }
 
-// GetRestaurantsDetails handles GET /api/restaurants/{id}.
-func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http.Request) {
+// GetRestaurantDetails handles GET /api/restaurants/{id}.
+func (h *RestaurantHandler) GetRestaurantDetails(w http.ResponseWriter, r *http.Request) {
 	id, ok := muxID(w, r)
 	if !ok {
 		return
@@ -396,10 +425,10 @@ func (h *RestaurantHandler) GetRestaurantsDetails(w http.ResponseWriter, r *http
 
 	restaurant, err := h.RestaurantService.GetActiveRestaurant(r.Context(), id)
 	if err != nil {
-		utils.Error(w, http.StatusNotFound, "restaurant not found")
+		writeRestaurantError(w, err)
 		return
 	}
-	utils.Success(w, http.StatusOK, "ok", restaurant)
+	utils.Success(w, http.StatusOK, "restaurant retrieved successfully", newRestaurantDetailResponse(restaurant))
 }
 
 // muxID parses the {id} path variable as a positive integer.

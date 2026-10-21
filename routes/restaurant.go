@@ -22,7 +22,7 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	// public routes: GET /restaurants, GET /restaurants/{id}
 	// SearchActive lists restaurants, and filters them when q is present.
 	router.HandleFunc("/restaurants", restaurantHandler.SearchActive).Methods(http.MethodGet)
-	router.HandleFunc("/restaurants/{id:[0-9]+}", restaurantHandler.GetRestaurantsDetails).Methods(http.MethodGet)
+	router.HandleFunc("/restaurants/{id:[0-9]+}", restaurantHandler.GetRestaurantDetails).Methods(http.MethodGet)
 
 	// manager routes: POST /restaurants, PUT /restaurants/{id}, PATCH /restaurants/{id}/status
 	manager := protected(router, tokens, blacklist)
