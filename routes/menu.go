@@ -22,8 +22,9 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
-	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
-
+	// Public routes: customers can view menu item details.
+    router.HandleFunc("/menu/{id}", menuHandler.GetMenuItemByID).Methods(http.MethodGet)
+	
 	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
 	// The service must also check the item belongs to the calling manager's restaurant.
 	manager := protected(router, tokens, blacklist)

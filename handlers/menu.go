@@ -79,7 +79,33 @@ func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
 
 	utils.Success(w, http.StatusCreated, "menu item created", newMenuItemResponse(item))
 }
+// GetMenuItemByID handles GET /api/menu/{id}.
+func (h *MenuHandler) GetMenuItemByID(
+    w http.ResponseWriter,
+    r *http.Request,
+) {
+    // Extract the menu item ID from the URL.
+    itemID, err := parseMenuItemID(r)
+    if err != nil {
+        utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+        return
+    }
 
+    // Retrieve the menu item using the service.
+    item, err := h.MenuService.GetMenuItemByID(r.Context(), itemID)
+    if err != nil {
+        writeMenuError(w, err)
+        return
+    }
+
+    // Return the menu item details.
+    utils.Success(
+        w,
+        http.StatusOK,
+        "menu item retrieved successfully",
+        newMenuItemResponse(item),
+    )
+}
 // UpdateMenuItem handles PUT /api/menu/{id}.
 func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())

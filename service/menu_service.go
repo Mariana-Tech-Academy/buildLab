@@ -50,6 +50,7 @@ type MenuService interface {
 	) (*models.MenuItem, error)
 	UpdateMenuItem(ctx context.Context, itemID, actorID uint, role models.Role, input UpdateMenuItemInput) (*models.MenuItem, error)
 	DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error
+    GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error)
 }
 
 type menuService struct {
@@ -68,7 +69,33 @@ func NewMenuService(
 		categoryRepo:      categories,
 		restaurantService: restaurants,
 	}
+}	
+	// GetMenuItemByID retrieves a menu item by its ID.
+func (s *menuService) GetMenuItemByID(
+    ctx context.Context,
+    itemID uint,
+) (*models.MenuItem, error) {
+
+    if itemID == 0 {
+        return nil, fmt.Errorf(
+            "%w: item ID must be greater than zero",
+            ErrInvalidMenuItemInput,
+        )
+    }
+
+    item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
+
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        return nil, ErrMenuItemNotFound
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    return item, nil
 }
+
 
 func (s *menuService) CreateMenuItem(ctx context.Context, actorID uint, role models.Role,
 	input CreateMenuItemInput,
