@@ -15,3 +15,5 @@ type MenuItem struct {
 	ImageURL     string     `json:"image_url"`
 	Available    bool       `gorm:"not null;default:true;index" json:"available"`
 }
+
+

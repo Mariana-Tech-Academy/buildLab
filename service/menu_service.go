@@ -16,6 +16,7 @@ var (
 	ErrInvalidMenuItemInput = errors.New("invalid menu item input")
 	ErrMenuItemNotFound     = errors.New("menu item not found")
 	ErrCategoryNotFound     = errors.New("category not found")
+	ErrRestaurantNotFound   = errors.New("restaurant not found")
 )
 
 // CreateMenuItemInput is the JSON body for creating a menu item.
@@ -50,6 +51,12 @@ type MenuService interface {
 	) (*models.MenuItem, error)
 	UpdateMenuItem(ctx context.Context, itemID, actorID uint, role models.Role, input UpdateMenuItemInput) (*models.MenuItem, error)
 	DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error
+
+
+    ListRestaurantMenu(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error)
+	ListMenuItem(ctx context.Context,itemID uint,) (*models.MenuItem, error)
+
+
 }
 
 type menuService struct {
@@ -67,6 +74,8 @@ func NewMenuService(
 		menuRepo:          repo,
 		categoryRepo:      categories,
 		restaurantService: restaurants,
+	
+	
 	}
 }
 
@@ -223,4 +232,17 @@ func (s *menuService) categoryExists(ctx context.Context, categoryID, restaurant
 		return ErrCategoryNotFound
 	}
 	return nil
+}
+
+
+
+
+
+func (s *menuService) ListRestaurantMenu(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error) {
+    return s.menuRepo.ListByRestaurant(ctx,restaurantID,categoryID,
+    )
+}
+
+func (s *menuService) ListMenuItem(ctx context.Context,itemID uint,) (*models.MenuItem, error) {
+    return s.menuRepo.GetMenuItemByID(ctx, itemID)
 }

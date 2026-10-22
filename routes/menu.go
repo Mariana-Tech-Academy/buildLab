@@ -29,7 +29,16 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	manager := protected(router, tokens, blacklist)
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
+
+
+	router.HandleFunc("/restaurants/{id}/menu", menuHandler.GetRestaurantMenu).Methods(http.MethodGet)
+	router.HandleFunc("/menu/{id}", menuHandler.GetMenuItem).Methods(http.MethodGet)
+
 	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
 	manager.HandleFunc("/menu/{id}", menuHandler.UpdateMenuItem).Methods(http.MethodPut)
 	manager.HandleFunc("/menu/{id}", menuHandler.DeleteMenuItem).Methods(http.MethodDelete)
 }
+
+
+
+

@@ -2,11 +2,19 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"Fhub/models"
 
 	"gorm.io/gorm"
 )
+
+
+var ErrUserNotFound = fmt.Errorf("user not found")
+
+
+
 
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id uint) (*models.User, error)
@@ -15,6 +23,7 @@ type UserRepository interface {
 	EmailExists(ctx context.Context, email string) (bool, error)
 	CreateWithCart(ctx context.Context, user *models.User) error
 	UpdatePassword(ctx context.Context, id uint, newHash string) error
+	SetRole(ctx context.Context,id uint, role models.Role) error
 }
 
 type PostgresUserRepo struct {
@@ -89,3 +98,22 @@ func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash 
 	}
 	return nil
 }
+
+
+
+func (r *PostgresUserRepo) SetRole(ctx context.Context, id uint, role models.Role) error {
+    // validate role conversion if needed, then:
+    res := r.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).UpdateColumn("role", role)
+    if res.Error != nil {
+        if errors.Is(res.Error, gorm.ErrRecordNotFound) {
+            return ErrUserNotFound
+        }
+        return res.Error
+    }
+    if res.RowsAffected == 0 {
+        // Either treat as not found, or return gorm.ErrRecordNotFound mapped
+        return ErrUserNotFound
+    }
+    return nil
+}
+

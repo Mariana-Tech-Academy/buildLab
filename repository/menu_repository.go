@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 
+
 	"Fhub/models"
 
 	"gorm.io/gorm"
 )
+
 
 // MenuRepository defines database operations for menu items.
 type MenuRepository interface {
@@ -14,6 +16,9 @@ type MenuRepository interface {
 	GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error)
 	UpdateMenuItem(ctx context.Context, item *models.MenuItem) error
 	DeleteMenuItem(ctx context.Context, itemID, restaurantID uint) error
+
+	ListByRestaurant(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error)
+	//GetByID(ctx context.Context,itemID uint,) (*models.MenuItem, error)
 }
 
 // PostgresMenuRepo stores the connection of the database.
@@ -76,3 +81,23 @@ func (r *PostgresMenuRepo) DeleteMenuItem(ctx context.Context, itemID, restauran
 	}
 	return nil
 }
+
+
+
+func (r *PostgresMenuRepo) ListByRestaurant(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error) {
+    var items []models.MenuItem
+
+    query := r.db.WithContext(ctx).
+        Model(&models.MenuItem{}).
+        Preload("Category").
+        Where("restaurant_id = ?", restaurantID)
+
+    if categoryID != nil {
+        query = query.Where("category_id = ?", *categoryID)
+    }
+
+    err := query.Order("name ASC").Find(&items).Error
+
+    return items, err
+}
+

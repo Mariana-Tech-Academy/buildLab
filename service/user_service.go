@@ -16,12 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
-	ErrUserNotFound = errors.New("user not found")
-	ErrValidation   = errors.New("validation failed")
-)
+
 
 var (
+
+	ErrValidation   = errors.New("validation failed")
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrAccountSuspended   = errors.New("your account is suspeneded")
 	ErrEmailTaken         = errors.New("email is already taken")

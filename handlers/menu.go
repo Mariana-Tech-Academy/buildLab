@@ -15,6 +15,7 @@ import (
 	"Fhub/utils"
 
 	"github.com/gorilla/mux"
+	"gorm.io/gorm"
 )
 
 type MenuHandler struct {
@@ -166,4 +167,78 @@ func writeMenuError(w http.ResponseWriter, err error) {
 		log.Printf("menu handler: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "internal server error")
 	}
+}
+
+
+
+
+
+
+
+func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter,r *http.Request,) {
+    restaurantID, err := strconv.ParseUint(
+        mux.Vars(r)["id"], 10, 64,
+    )
+if err != nil || restaurantID == 0 {
+        http.Error(w, "Invalid restaurant ID",
+            http.StatusBadRequest)
+        return
+    }
+
+    var categoryID *uint
+
+    if value := r.URL.Query().Get("category_id"); value != "" {
+        parsedID, err := strconv.ParseUint(value, 10, 64)
+
+        if err != nil || parsedID == 0 {
+            http.Error(w, "Invalid category ID",
+                http.StatusBadRequest)
+            return
+        }
+
+        id := uint(parsedID)
+        categoryID = &id
+    }
+
+    items, err := h.MenuService.ListRestaurantMenu( r.Context(),uint(restaurantID),categoryID,
+    )
+
+    if err != nil {
+        http.Error(w, "Failed to retrieve menu",
+            http.StatusInternalServerError)
+        return
+    }
+  w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{   
+        "items": items,
+    })
+}
+
+func (h *MenuHandler) GetMenuItem(w http.ResponseWriter,r *http.Request,) { 
+	itemID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64,
+    )
+    if err != nil || itemID == 0 {
+        http.Error(w, "Invalid menu item ID",
+            http.StatusBadRequest)
+        return
+    }
+
+    item, err := h.MenuService.ListMenuItem(
+        r.Context(), uint(itemID),
+    )
+
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        http.Error(w, "Menu item not found",
+            http.StatusNotFound)
+        return
+    }
+
+    if err != nil {
+        http.Error(w, "Failed to retrieve menu item",
+            http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(item)
 }

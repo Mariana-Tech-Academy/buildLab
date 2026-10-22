@@ -244,7 +244,7 @@ type registerUserResponse struct {
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)    
 
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -365,3 +365,6 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	utils.Success(w, http.StatusOK, "password changed successfully", nil)
 }
+
+
+
