@@ -334,3 +334,54 @@ func (h *RestaurantHandler) ListRestaurants(w http.ResponseWriter, r *http.Reque
 		Total:       result.Total,
 	})
 }
+func (h *RestaurantHandler) SearchActive(w http.ResponseWriter, r *http.Request) {
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		h.ListRestaurants(w, r)
+		return
+	}
+	pagination, err := utils.ParseListPagination(r.URL.Query())
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.RestaurantService.SearchActive(
+		r.Context(),
+		query,
+		pagination.Page,
+		pagination.Limit,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidRestaurant) {
+			utils.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("search restaurants: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not search restaurants")
+		return
+	}
+	summaries := make([]restaurantSummary, 0, len(result.Restaurants))
+	for _, restaurant := range result.Restaurants {
+		summaries = append(summaries, restaurantSummary{
+			ID:          restaurant.ID,
+			Name:        restaurant.Name,
+			ImageURL:    restaurant.ImageURL,
+			Address:     restaurant.Address,
+			City:        restaurant.City,
+			OpeningTime: restaurant.OpeningTime,
+			ClosingTime: restaurant.ClosingTime,
+		})
+	}
+	message := "restaurants retrieved successfully"
+	if result.Total == 0 {
+		message = "No restaurants found. Try another name or location."
+	}
+	utils.Success(w, http.StatusOK, message, restaurantListResponse{
+		Restaurants: summaries,
+		Page:        result.Page,
+		Limit:       result.Limit,
+		Total:       result.Total,
+	})
+
+}

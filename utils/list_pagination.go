@@ -11,7 +11,7 @@ const (
 	MaxListPageSize     = 50
 )
 
-// ListPagination stores the page number and page size.
+// ListPagination stores the page number and size.
 type ListPagination struct {
 	Page  int
 	Limit int

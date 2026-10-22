@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"Fhub/models"
+
 	"gorm.io/gorm"
 )
 
@@ -14,6 +16,8 @@ type RestaurantRepository interface {
 	Update(ctx context.Context, restaurant *models.Restaurant) error
 	UpdateImageURL(ctx context.Context, restaurantID uint, imageURL string) error
 	ListActive(ctx context.Context, limit, offset int) ([]models.Restaurant, int64, error)
+
+	SearchActive(ctx context.Context, query string, limit, offset int) ([]models.Restaurant, int64, error)
 }
 
 // PostgresRestaurantRepo connects the repository to PostgreSQL.
@@ -48,11 +52,45 @@ func (r *PostgresRestaurantRepo) FindByID(
 	return &restaurant, nil
 }
 
-// Update saves changes to a restaurant.
-func (r *PostgresRestaurantRepo) Update(
+// SearchActive returns one page of matching active restaurants.
+func (r *PostgresRestaurantRepo) SearchActive(
 	ctx context.Context,
-	restaurant *models.Restaurant,
-) error {
+	query string,
+	limit, offset int,
+
+) ([]models.Restaurant, int64, error) {
+	searchTerm := "%" + strings.TrimSpace(query) + "%"
+	filtered := r.db.WithContext(ctx).
+		Model(&models.Restaurant{}).
+		Where("status = ?", models.RestaurantStatusActive).
+		Where(
+			"LOWER(name) LIKE LOWER(?) OR LOWER(address) LIKE LOWER(?) OR LOWER(city) LIKE LOWER(?) OR LOWER(state) LIKE LOWER(?)",
+			searchTerm,
+			searchTerm,
+			searchTerm,
+			searchTerm,
+		)
+	// Count all matches before applying pagination.
+	var total int64
+	if err := filtered.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	// Keep the order consistent between the pages.
+	var restaurants []models.Restaurant
+	err := filtered.
+		Order("name ASC, id ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&restaurants).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return restaurants, total, nil
+}
+
+// Update saves restaurant changes to the database.
+func (r *PostgresRestaurantRepo) Update(ctx context.Context, restaurant *models.Restaurant) error {
+
 	return r.db.WithContext(ctx).Save(restaurant).Error
 }
 

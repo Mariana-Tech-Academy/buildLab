@@ -70,6 +70,8 @@ type RestaurantService interface {
 	UpdateRestaurantImage(ctx context.Context, restaurantID, actorID uint, role models.Role, imageURL string) (previousURL string, err error)
 	SetRestaurantStatus(ctx context.Context, restaurantID, actorID uint, role models.Role, status models.RestaurantStatus) (*models.Restaurant, error)
 	ListActive(ctx context.Context, page, limit int) (*RestaurantPage, error)
+
+	SearchActive(ctx context.Context, query string, page, limit int) (*RestaurantPage, error)
 }
 
 type restaurantService struct {
@@ -78,6 +80,51 @@ type restaurantService struct {
 
 func NewRestaurantService(repo repository.RestaurantRepository) RestaurantService {
 	return &restaurantService{restaurantRepo: repo}
+}
+
+func (s *restaurantService) SearchActive(
+	ctx context.Context,
+	query string,
+	page, limit int,
+) (*RestaurantPage, error) {
+	query = strings.TrimSpace(query)
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = defaultRestaurantPageSize
+	}
+	if limit > maxRestaurantPageSize {
+		return nil, fmt.Errorf(
+			"%w: limit must be between 1 and %d",
+			ErrInvalidRestaurant,
+			maxRestaurantPageSize,
+		)
+	}
+	// Check the offset will fit before calculating it.
+	maxInt := int(^uint(0) >> 1)
+	if page-1 > maxInt/limit {
+		return nil, fmt.Errorf("%w: page number is too large", ErrInvalidRestaurant)
+	}
+
+	offset := (page - 1) * limit
+	restaurants, total, err := s.restaurantRepo.SearchActive(
+		ctx,
+		query,
+		limit,
+		offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RestaurantPage{
+		Restaurants: restaurants,
+		Page:        page,
+		Limit:       limit,
+		Total:       total,
+	}, nil
 }
 
 func (s *restaurantService) Create(ctx context.Context, input CreateRestaurantInput) (*models.Restaurant, error) {

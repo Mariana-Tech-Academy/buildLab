@@ -19,7 +19,7 @@ func RestaurantRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, 
 	restaurantHandler := handlers.NewRestaurantHandler(restaurantService)
 
 	// public routes: GET /restaurants, GET /restaurants/{id}
-	router.HandleFunc("/restaurants", restaurantHandler.ListRestaurants).Methods(http.MethodGet)
+	router.HandleFunc("/restaurants", restaurantHandler.SearchActive).Methods(http.MethodGet)
 
 	// manager routes: POST /restaurants, PUT /restaurants/{id}, PATCH /restaurants/{id}/status
 	manager := protected(router, tokens, blacklist)
