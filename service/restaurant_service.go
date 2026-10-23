@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	
+	ErrRestaurantNotFound  = errors.New("restaurant not found")
 	ErrRestaurantForbidden = errors.New("you do not own this restaurant")
 	ErrInvalidRestaurant   = errors.New("invalid restaurant details")
 )

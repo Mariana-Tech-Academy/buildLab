@@ -16,7 +16,6 @@ var (
 	ErrInvalidMenuItemInput = errors.New("invalid menu item input")
 	ErrMenuItemNotFound     = errors.New("menu item not found")
 	ErrCategoryNotFound     = errors.New("category not found")
-	ErrRestaurantNotFound   = errors.New("restaurant not found")
 )
 
 // CreateMenuItemInput is the JSON body for creating a menu item.
@@ -52,11 +51,8 @@ type MenuService interface {
 	UpdateMenuItem(ctx context.Context, itemID, actorID uint, role models.Role, input UpdateMenuItemInput) (*models.MenuItem, error)
 	DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error
 
-
-    ListRestaurantMenu(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error)
-	ListMenuItem(ctx context.Context,itemID uint,) (*models.MenuItem, error)
-
-
+	ListRestaurantMenu(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error)
+	ListMenuItem(ctx context.Context, itemID uint) (*models.MenuItem, error)
 }
 
 type menuService struct {
@@ -74,8 +70,6 @@ func NewMenuService(
 		menuRepo:          repo,
 		categoryRepo:      categories,
 		restaurantService: restaurants,
-	
-	
 	}
 }
 
@@ -234,15 +228,29 @@ func (s *menuService) categoryExists(ctx context.Context, categoryID, restaurant
 	return nil
 }
 
-
-
-
-
-func (s *menuService) ListRestaurantMenu(ctx context.Context,restaurantID uint,categoryID *uint,) ([]models.MenuItem, error) {
-    return s.menuRepo.ListByRestaurant(ctx,restaurantID,categoryID,
-    )
+func (s *menuService) ListRestaurantMenu(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error) {
+	if _, err := s.restaurantService.GetActiveRestaurant(ctx, restaurantID); err != nil {
+		return nil, err
+	}
+	return s.menuRepo.ListByRestaurant(ctx, restaurantID, categoryID)
 }
 
-func (s *menuService) ListMenuItem(ctx context.Context,itemID uint,) (*models.MenuItem, error) {
-    return s.menuRepo.GetMenuItemByID(ctx, itemID)
+func (s *menuService) ListMenuItem(ctx context.Context, itemID uint) (*models.MenuItem, error) {
+	item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrMenuItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !item.Available {
+		return nil, ErrMenuItemNotFound
+	}
+	if _, err := s.restaurantService.GetActiveRestaurant(ctx, item.RestaurantID); err != nil {
+		if errors.Is(err, ErrRestaurantNotFound) {
+			return nil, ErrMenuItemNotFound
+		}
+		return nil, err
+	}
+	return item, nil
 }

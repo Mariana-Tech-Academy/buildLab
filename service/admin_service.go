@@ -1,58 +1,50 @@
 package service
 
 import (
-	"Fhub/models"
-	"Fhub/repository"
 	"context"
 	"errors"
 	"fmt"
 
-	
+	"Fhub/models"
+	"Fhub/repository"
+
+	"gorm.io/gorm"
 )
 
-
-var (     
-	ErrInvalidRole = errors.New("role must be customer, manager or admin")   // 422)
-	ErrUserNotFound = errors.New("user not found") // 404
-)
-
+// ErrInvalidRole means the role is not customer, manager, or admin.
+var ErrInvalidRole = errors.New("invalid role")
 
 type AdminService interface {
-    SetUserRole(ctx context.Context, targetID uint, role models.Role) (*models.User, error)
-	
+	SetUserRole(ctx context.Context, targetID uint, role models.Role) (*models.User, error)
 }
 
 type adminService struct {
 	adminRepo repository.AdminRepository
-	userRepo repository.UserRepository
+	userRepo  repository.UserRepository
 }
 
 func NewAdminService(adminRepo repository.AdminRepository, userRepo repository.UserRepository) AdminService {
 	return &adminService{adminRepo: adminRepo, userRepo: userRepo}
 }
 
-
-
-
-
+// SetUserRole lets an admin assign customer, manager, or admin.
 func (s *adminService) SetUserRole(ctx context.Context, targetID uint, role models.Role) (*models.User, error) {
-    // Validate role explicitly (avoid accepting arbitrary values)
-    switch role {
-    case models.RoleCustomer, models.RoleManager, models.RoleAdmin:
-    default:
-        return nil, ErrInvalidRole
-    }
+	switch role {
+	case models.RoleCustomer, models.RoleManager, models.RoleAdmin:
+	default:
+		return nil, ErrInvalidRole
+	}
 
-    // Pass context down to the repo so cancellations and deadlines work.
-    if err := s.userRepo.SetRole(ctx, targetID, role); err != nil {
-        // Map repo-level not-found to service-level not-found
-        if errors.Is(err, ErrUserNotFound) {
-            return nil, ErrUserNotFound
-        }
-        return nil, fmt.Errorf("set role: %w", err)
-    }
+	if err := s.userRepo.SetRole(ctx, targetID, role); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("set role: %w", err)
+	}
 
-    // Return the updated user (repo should fetch fresh data)
-    return s.userRepo.GetUserByID(ctx, targetID)
+	user, err := s.userRepo.GetUserByID(ctx, targetID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrUserNotFound
+	}
+	return user, err
 }
-
