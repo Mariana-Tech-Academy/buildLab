@@ -1,13 +1,14 @@
 package repository
 
 import (
+	"Fhub/models"
 	"context"
 	"errors"
-	"math"
-	"Fhub/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"math"
 )
+
 // CheckoutRepository defines the database operations needed for checkout.
 type CheckoutRepository interface {
 
@@ -23,6 +24,7 @@ type CheckoutRepository interface {
 		input CheckoutInput,
 	) (*models.Order, error)
 }
+
 // CheckoutCart contains the cart and it's items.
 type CheckoutCart struct {
 	Cart  models.Cart
