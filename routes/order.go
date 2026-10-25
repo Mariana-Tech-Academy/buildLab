@@ -17,9 +17,19 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	orderService := service.NewOrderService(repo)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
+	// Create the checkout repository using the existing database connection.
+	checkoutRepo := repository.NewOrderRepository(db).(*repository.PostgresOrderRepo)
+	// Connect the checkout service to the repository.
+	checkoutService := service.NewCheckoutService(checkoutRepo)
+	// Create the checkout handler to process incoming checkout requests.
+	checkoutHandler := handlers.NewCheckoutHandler(checkoutService)
+
 	// customer routes: POST /orders (checkout)
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
+
+	// Connect checkout requests to the checkout handler.
+	customer.HandleFunc("/orders", checkoutHandler.PlaceOrder).Methods("POST")
 
 	// authenticated routes: GET /orders, GET /orders/{id}
 	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
