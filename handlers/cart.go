@@ -51,24 +51,24 @@ func newCartResponse(cart *models.Cart) cartResponse {
 		total += lineTotal
 
 		items = append(items, cartItemResponse{
-			ID: item.ID,
+			ID:         item.ID,
 			MenuItemID: item.MenuItemID,
-			Name: item.MenuItem.Name,
-			UnitPrice: item.MenuItem.Price,
-			Quantity: item.Quantity,
-			LineTotal: lineTotal,
+			Name:       item.MenuItem.Name,
+			UnitPrice:  item.MenuItem.Price,
+			Quantity:   item.Quantity,
+			LineTotal:  lineTotal,
 		})
 	}
 
 	return cartResponse{
-		ID : cart.ID,
-		RestaurantID : cart.RestaurantID,
-		Items: items,
-		Total: total,
+		ID:           cart.ID,
+		RestaurantID: cart.RestaurantID,
+		Items:        items,
+		Total:        total,
 	}
 }
 
-//writeCartError turns service errrors into the right status code & message 
+// writeCartError turns service errrors into the right status code & message
 func writeCartError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidQuantity):
@@ -88,7 +88,7 @@ func (h *CartHandler) UpdateQuantity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cartItemID, ok := muxID(w,r)
+	cartItemID, ok := muxID(w, r)
 	if !ok {
 		return
 	}
@@ -108,6 +108,6 @@ func (h *CartHandler) UpdateQuantity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-//sends back the updated cart with the new line totals and cart total
+	//sends back the updated cart with the new line totals and cart total
 	utils.Success(w, http.StatusOK, "cart item quantity updated", newCartResponse(cart))
 }
