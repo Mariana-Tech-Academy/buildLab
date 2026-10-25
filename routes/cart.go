@@ -7,6 +7,7 @@ import (
 	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
+	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -20,6 +21,7 @@ func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	// customer routes: GET /cart, POST /cart/items, PUT /cart/items/{id}, DELETE /cart/items/{id}, DELETE /cart
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
+	customer.HandleFunc("/cart/items/{id}", cartHandler.UpdateQuantity).Methods(http.MethodPut)
 
 	_, _ = cartHandler, customer
 }
