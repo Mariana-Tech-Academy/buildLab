@@ -134,6 +134,6 @@ func (s *cartService) AddItemToCart(
 		return nil, fmt.Errorf("failed to check cart item: %w", err)
 	}
 
-		// Return the customer's cart.
-		return cart, nil
+	// Return the customer's cart.
+	return cart, nil
 }
