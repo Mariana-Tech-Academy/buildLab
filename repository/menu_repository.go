@@ -1,8 +1,22 @@
+
 package repository
 
-import "gorm.io/gorm"
+import (
+	"errors"
+
+	"Fhub/models"
+	"gorm.io/gorm"
+)
+
+var ErrMenuItemNotFound = errors.New("menu item not found")
+var ErrMenuItemUnavailable = errors.New("this item is currently unavailable")
+var ErrMenuItemForbidden = errors.New("you do not manage this restaurant")
 
 type MenuRepository interface {
+	Get(id uint) (*models.MenuItem, error)
+	List(restaurantID uint) ([]models.MenuItem, error)
+	SetAvailability(id, managerID uint, isAdmin, available bool) (*models.MenuItem, error)
+	CheckAvailable(id uint) error
 }
 
 type PostgresMenuRepo struct {
@@ -12,3 +26,93 @@ type PostgresMenuRepo struct {
 func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &PostgresMenuRepo{db: db}
 }
+
+func (r *PostgresMenuRepo) Get(id uint) (*models.MenuItem, error) {
+	var item models.MenuItem
+
+	if err := r.db.First(&item, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrMenuItemNotFound
+		}
+		return nil, err
+	}
+
+	return &item, nil
+}
+
+func (r *PostgresMenuRepo) List(restaurantID uint) ([]models.MenuItem, error) {
+	var items []models.MenuItem
+
+	err := r.db.Where("restaurant_id = ?", restaurantID).
+		Find(&items).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *PostgresMenuRepo) SetAvailability(
+	id, managerID uint,
+	isAdmin, available bool,
+) (*models.MenuItem, error) {
+
+	var item models.MenuItem
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Raw(
+			"SELECT * FROM menu_items WHERE id = ? AND deleted_at IS NULL FOR UPDATE",
+			id,
+		).Scan(&item).Error; err != nil {
+			return err
+		}
+
+		if item.ID == 0 {
+			return ErrMenuItemNotFound
+		}
+
+		if !isAdmin {
+			var count int64
+
+			if err := tx.Model(&models.Restaurant{}).
+				Where("id = ? AND manager_id = ?", item.RestaurantID, managerID).
+				Count(&count).Error; err != nil {
+				return err
+			}
+
+			if count == 0 {
+				return ErrMenuItemForbidden
+			}
+		}
+
+		if err := tx.Model(&item).
+			Update("available", available).Error; err != nil {
+			return err
+		}
+
+		item.Available = available
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &item, nil
+}
+
+func (r *PostgresMenuRepo) CheckAvailable(id uint) error {
+	item, err := r.Get(id)
+
+	if err != nil {
+		return err
+	}
+
+	if !item.Available {
+		return ErrMenuItemUnavailable
+	}
+
+	return nil
+}
+
