@@ -167,3 +167,49 @@ func writeMenuError(w http.ResponseWriter, err error) {
 		utils.Error(w, http.StatusInternalServerError, "internal server error")
 	}
 }
+
+func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) {
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	var categoryID *uint
+	if value := r.URL.Query().Get("category_id"); value != "" {
+		parsedID, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || parsedID == 0 {
+			utils.Error(w, http.StatusBadRequest, "invalid category ID")
+			return
+		}
+		id := uint(parsedID)
+		categoryID = &id
+	}
+
+	items, err := h.MenuService.ListRestaurantMenu(r.Context(), uint(restaurantID), categoryID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	responses := make([]menuItemResponse, 0, len(items))
+	for i := range items {
+		responses = append(responses, newMenuItemResponse(&items[i]))
+	}
+	utils.Success(w, http.StatusOK, "menu retrieved successfully", responses)
+}
+
+func (h *MenuHandler) GetMenuItem(w http.ResponseWriter, r *http.Request) {
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	item, err := h.MenuService.ListMenuItem(r.Context(), itemID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "menu item retrieved successfully", newMenuItemResponse(item))
+}

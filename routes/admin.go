@@ -14,8 +14,9 @@ import (
 )
 
 func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
-	repo := repository.NewAdminRepository(db)
-	adminService := service.NewAdminService(repo)
+	adminRepo := repository.NewAdminRepository(db)
+	userRepo := repository.NewUserRepository(db)
+	adminService := service.NewAdminService(adminRepo, userRepo)
 	adminHandler := handlers.NewAdminHandler(adminService)
 
 	// admin routes: GET /admin/users, GET /admin/restaurants, GET /admin/orders, GET /admin/statistics, ...
@@ -23,4 +24,5 @@ func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	admin.Use(middleware.Authenticate(tokens, blacklist), middleware.RequireRole(models.RoleAdmin))
 
 	admin.HandleFunc("/test", adminHandler.TestAdmin).Methods(http.MethodGet)
+	admin.HandleFunc("/users/{id}/role", adminHandler.SetUserRoleHandler).Methods(http.MethodPatch)
 }
