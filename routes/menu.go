@@ -24,8 +24,7 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 
 	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
 	router.HandleFunc("/restaurants/{id}/menu", menuHandler.GetRestaurantMenu).Methods(http.MethodGet)
-	router.HandleFunc("/menu/{id}", menuHandler.GetMenuItem).Methods(http.MethodGet)
-
+	router.HandleFunc("/menu/{id}", menuHandler.GetMenuItemByID).Methods(http.MethodGet)
 	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
 	// The service must also check the item belongs to the calling manager's restaurant.
 	manager := protected(router, tokens, blacklist)

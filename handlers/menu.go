@@ -80,6 +80,23 @@ func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
 	utils.Success(w, http.StatusCreated, "menu item created", newMenuItemResponse(item))
 }
 
+// GetMenuItemByID handles GET /api/menu/{id}.
+func (h *MenuHandler) GetMenuItemByID(w http.ResponseWriter, r *http.Request) {
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	item, err := h.MenuService.GetMenuItemByID(r.Context(), itemID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "menu item retrieved successfully", newMenuItemResponse(item))
+}
+
 // UpdateMenuItem handles PUT /api/menu/{id}.
 func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
@@ -197,19 +214,4 @@ func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) 
 		responses = append(responses, newMenuItemResponse(&items[i]))
 	}
 	utils.Success(w, http.StatusOK, "menu retrieved successfully", responses)
-}
-
-func (h *MenuHandler) GetMenuItem(w http.ResponseWriter, r *http.Request) {
-	itemID, err := parseMenuItemID(r)
-	if err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
-		return
-	}
-
-	item, err := h.MenuService.ListMenuItem(r.Context(), itemID)
-	if err != nil {
-		writeMenuError(w, err)
-		return
-	}
-	utils.Success(w, http.StatusOK, "menu item retrieved successfully", newMenuItemResponse(item))
 }
