@@ -25,6 +25,14 @@ func MenuRoutes(
 	menuService := service.NewMenuService(repo)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
+	
+    // SRCH-02: Public menu search and filtering
+    router.HandleFunc(
+        "/menu/search",
+        menuHandler.Search,
+    ).Methods(http.MethodGet)
+
+
 	// Public routes
 	router.HandleFunc(
 		"/restaurants/{id:[0-9]+}/menu",

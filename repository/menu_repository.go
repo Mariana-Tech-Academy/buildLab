@@ -12,11 +12,21 @@ var ErrMenuItemNotFound = errors.New("menu item not found")
 var ErrMenuItemUnavailable = errors.New("this item is currently unavailable")
 var ErrMenuItemForbidden = errors.New("you do not manage this restaurant")
 
+type MenuSearchFilters struct {
+    Name         string
+    CategoryID   *uint
+    RestaurantID *uint
+    MinPrice     *int64
+    MaxPrice     *int64
+    Available    *bool
+}
+
 type MenuRepository interface {
 	Get(id uint) (*models.MenuItem, error)
 	List(restaurantID uint) ([]models.MenuItem, error)
 	SetAvailability(id, managerID uint, isAdmin, available bool) (*models.MenuItem, error)
 	CheckAvailable(id uint) error
+	Search(filters MenuSearchFilters) ([]models.MenuItem, error)
 }
 
 type PostgresMenuRepo struct {
@@ -115,4 +125,40 @@ func (r *PostgresMenuRepo) CheckAvailable(id uint) error {
 
 	return nil
 }
+
+
+func (r *PostgresMenuRepo) Search(filters MenuSearchFilters) ([]models.MenuItem, error) {
+    var items []models.MenuItem
+
+    query := r.db.Model(&models.MenuItem{})
+
+    if filters.Name != "" {
+        query = query.Where("name ILIKE ?", "%"+filters.Name+"%")
+    }
+
+    if filters.CategoryID != nil {
+        query = query.Where("category_id = ?", *filters.CategoryID)
+    }
+
+    if filters.RestaurantID != nil {
+        query = query.Where("restaurant_id = ?", *filters.RestaurantID)
+    }
+
+    if filters.MinPrice != nil {
+        query = query.Where("price >= ?", *filters.MinPrice)
+    }
+
+    if filters.MaxPrice != nil {
+        query = query.Where("price <= ?", *filters.MaxPrice)
+    }
+
+    if filters.Available != nil {
+        query = query.Where("available = ?", *filters.Available)
+    }
+
+    err := query.Find(&items).Error
+
+    return items, err
+}
+
 

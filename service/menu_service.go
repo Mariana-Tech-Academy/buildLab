@@ -13,6 +13,7 @@ Get(uint) (*models.MenuItem, error)
     List(uint) ([]models.MenuItem, error)
     SetAvailability(uint, uint, bool, bool) (*models.MenuItem, error)
     CheckAvailable(uint) error
+    Search(filters repository.MenuSearchFilters) ([]models.MenuItem, error)
 }
 
 type menuService struct {
@@ -42,4 +43,10 @@ func (s *menuService) SetAvailability(
 
 func (s *menuService) CheckAvailable(id uint) error {
     return s.menuRepo.CheckAvailable(id)
+}
+
+func (s *menuService) Search(
+    filters repository.MenuSearchFilters,
+) ([]models.MenuItem, error) {
+    return s.menuRepo.Search(filters)
 }
