@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"Fhub/models"
 	"Fhub/repository"
 )
 
@@ -11,6 +12,7 @@ var ErrRestaurantNotActive = errors.New("restaurant is not active")
 
 type OrderService interface {
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+	GetCheckoutSummary(ctx context.Context,customerID uint,) (*models.CheckoutSummary, error)
 }
 
 type orderService struct {
@@ -33,3 +35,16 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 	}
 	return nil
 }
+
+func (s *orderService) GetCheckoutSummary(ctx context.Context,customerID uint,) (*models.CheckoutSummary, error) {
+	return s.orderRepo.GetCheckoutSummary(ctx, customerID)
+}
+
+
+
+
+
+
+
+
+

@@ -202,7 +202,7 @@ func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) 
 func (h *MenuHandler) GetMenuItem(w http.ResponseWriter, r *http.Request) {
 	itemID, err := parseMenuItemID(r)
 	if err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID") 
 		return
 	}
 

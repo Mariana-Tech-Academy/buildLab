@@ -7,6 +7,7 @@ import (
 	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
+	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -20,6 +21,8 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	// customer routes: POST /orders (checkout)
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
+	customer.HandleFunc("/orders/checkout/summary", orderHandler.GetCheckoutSummary).Methods(http.MethodGet)
+	
 
 	// authenticated routes: GET /orders, GET /orders/{id}
 	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
@@ -31,3 +34,9 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 
 	_, _, _, _ = orderHandler, customer, authed, staff
 }
+
+
+
+
+
+ 
