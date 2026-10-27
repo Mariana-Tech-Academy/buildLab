@@ -52,6 +52,7 @@ type MenuService interface {
 	DeleteMenuItem(ctx context.Context, itemID, actorID uint, role models.Role) error
 	GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error)
 	ListRestaurantMenu(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error)
+	SetAvailability(ctx context.Context, itemID, actorID uint, role models.Role, available bool) (*models.MenuItem, error)
 }
 
 type menuService struct {
@@ -90,9 +91,6 @@ func (s *menuService) GetMenuItemByID(
 	}
 	if err != nil {
 		return nil, err
-	}
-	if !item.Available {
-		return nil, ErrMenuItemNotFound
 	}
 	if _, err := s.restaurantService.GetActiveRestaurant(ctx, item.RestaurantID); err != nil {
 		if errors.Is(err, ErrRestaurantNotFound) {
@@ -263,4 +261,31 @@ func (s *menuService) ListRestaurantMenu(ctx context.Context, restaurantID uint,
 		return nil, err
 	}
 	return s.menuRepo.ListByRestaurant(ctx, restaurantID, categoryID)
+}
+
+// SetAvailability marks one menu item available or unavailable for the restaurant's manager or an admin.
+func (s *menuService) SetAvailability(ctx context.Context, itemID, actorID uint, role models.Role, available bool) (*models.MenuItem, error) {
+	if itemID == 0 {
+		return nil, fmt.Errorf("%w: item ID must be greater than zero", ErrInvalidMenuItemInput)
+	}
+
+	item, err := s.menuRepo.GetMenuItemByID(ctx, itemID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrMenuItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.restaurantService.CheckOwnership(ctx, item.RestaurantID, actorID, role); err != nil {
+		return nil, err
+	}
+
+	item.Available = available
+	if err := s.menuRepo.UpdateMenuItem(ctx, item); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrMenuItemNotFound
+		}
+		return nil, err
+	}
+	return item, nil
 }

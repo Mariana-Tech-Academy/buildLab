@@ -134,6 +134,42 @@ func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 	utils.Success(w, http.StatusOK, "menu item updated", newMenuItemResponse(item))
 }
 
+// SetAvailability handles PATCH /api/menu/{id}/availability.
+func (h *MenuHandler) SetAvailability(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	var req struct {
+		Available *bool `json:"available"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || req.Available == nil {
+		utils.Error(w, http.StatusBadRequest, "provide available as true or false")
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		utils.Error(w, http.StatusBadRequest, "request must contain one JSON object")
+		return
+	}
+
+	item, err := h.MenuService.SetAvailability(r.Context(), itemID, claims.UserID, claims.Role, *req.Available)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "menu item availability updated", newMenuItemResponse(item))
+}
+
 // DeleteMenuItem handles DELETE /api/menu/{id}.
 func (h *MenuHandler) DeleteMenuItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())

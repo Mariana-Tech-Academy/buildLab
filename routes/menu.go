@@ -31,5 +31,6 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
 	manager.HandleFunc("/menu/{id}", menuHandler.UpdateMenuItem).Methods(http.MethodPut)
+	manager.HandleFunc("/menu/{id}/availability", menuHandler.SetAvailability).Methods(http.MethodPatch)
 	manager.HandleFunc("/menu/{id}", menuHandler.DeleteMenuItem).Methods(http.MethodDelete)
 }

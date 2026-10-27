@@ -84,7 +84,7 @@ func (r *PostgresMenuRepo) ListByRestaurant(ctx context.Context, restaurantID ui
 	var items []models.MenuItem
 
 	query := r.db.WithContext(ctx).
-		Where("restaurant_id = ? AND available = ?", restaurantID, true)
+		Where("restaurant_id = ?", restaurantID)
 
 	if categoryID != nil {
 		query = query.Where("category_id = ?", *categoryID)
