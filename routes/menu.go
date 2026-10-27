@@ -1,4 +1,3 @@
-
 package routes
 
 import (
@@ -15,40 +14,23 @@ import (
 	"gorm.io/gorm"
 )
 
-func MenuRoutes(
-	router *mux.Router,
-	db *gorm.DB,
-	tokens *auth.JWTManager,
-	blacklist *middleware.TokenBlacklist,
-) {
+func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
 	repo := repository.NewMenuRepository(db)
-	menuService := service.NewMenuService(repo)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+	restaurantService := service.NewRestaurantService(restaurantRepo)
+	categoryRepo := repository.NewCategoryRepository(db)
+	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
-	// Public routes
-	router.HandleFunc(
-		"/restaurants/{id:[0-9]+}/menu",
-		menuHandler.List,
-	).Methods(http.MethodGet)
-
-	router.HandleFunc(
-		"/menu/{id:[0-9]+}",
-		menuHandler.Get,
-	).Methods(http.MethodGet)
-
-	// Manager and admin routes
+	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
+	router.HandleFunc("/restaurants/{id}/menu", menuHandler.GetRestaurantMenu).Methods(http.MethodGet)
+	router.HandleFunc("/menu/{id}", menuHandler.GetMenuItemByID).Methods(http.MethodGet)
+	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}
+	// The service must also check the item belongs to the calling manager's restaurant.
 	manager := protected(router, tokens, blacklist)
-
-	manager.Use(
-		middleware.RequireRole(
-			models.RoleManager,
-			models.RoleAdmin,
-		),
-	)
-
-	// Update menu item availability
-	manager.HandleFunc(
-		"/menu/{id:[0-9]+}/availability",
-		menuHandler.SetAvailability,
-	).Methods(http.MethodPatch)
+	manager.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
+	manager.HandleFunc("/menu", menuHandler.CreateMenuItem).Methods(http.MethodPost)
+	manager.HandleFunc("/menu/{id}", menuHandler.UpdateMenuItem).Methods(http.MethodPut)
+	manager.HandleFunc("/menu/{id}/availability", menuHandler.SetAvailability).Methods(http.MethodPatch)
+	manager.HandleFunc("/menu/{id}", menuHandler.DeleteMenuItem).Methods(http.MethodDelete)
 }
