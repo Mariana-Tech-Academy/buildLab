@@ -14,6 +14,9 @@ type MenuRepository interface {
 	GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error)
 	UpdateMenuItem(ctx context.Context, item *models.MenuItem) error
 	DeleteMenuItem(ctx context.Context, itemID, restaurantID uint) error
+
+	ListByRestaurant(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error)
+	//GetByID(ctx context.Context,itemID uint,) (*models.MenuItem, error)
 }
 
 // PostgresMenuRepo stores the connection of the database.
@@ -75,4 +78,18 @@ func (r *PostgresMenuRepo) DeleteMenuItem(ctx context.Context, itemID, restauran
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func (r *PostgresMenuRepo) ListByRestaurant(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error) {
+	var items []models.MenuItem
+
+	query := r.db.WithContext(ctx).
+		Where("restaurant_id = ? AND available = ?", restaurantID, true)
+
+	if categoryID != nil {
+		query = query.Where("category_id = ?", *categoryID)
+	}
+
+	err := query.Order("name ASC, id ASC").Find(&items).Error
+	return items, err
 }
