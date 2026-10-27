@@ -9,10 +9,19 @@ import (
 	"Fhub/repository"
 )
 
+const (
+	maxRecipientNameLength        = 100
+	maxDeliveryAddressLength      = 200
+	maxDeliveryCityLength         = 100
+	maxDeliveryStateLength        = 100
+	maxDeliveryInstructionsLength = 500
+)
+
 var ErrRestaurantNotActive = errors.New("restaurant is not active")
 
 type OrderService interface {
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+	ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string
 }
 
 type orderService struct {
@@ -51,8 +60,7 @@ type DeliveryInfoInput struct {
 var deliveryPhoneRegex = regexp.MustCompile(`^(0|\+44)\d{10}$`)
 
 // ValidateDeliveryInfo validates customer delivery details.
-func ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string {
-
+func (s *orderService) ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string {
 	errs := make(map[string]string)
 
 	// Remove unnecessary spaces.
@@ -66,31 +74,38 @@ func ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string {
 	input.Phone = strings.ReplaceAll(input.Phone, " ", "")
 	input.Phone = strings.ReplaceAll(input.Phone, "-", "")
 
-	// Validate recipient name.
 	if input.RecipientName == "" {
 		errs["recipient_name"] = "recipient name is required"
+	} else if len(input.RecipientName) > maxRecipientNameLength {
+		errs["recipient_name"] = "recipient name cannot exceed 100 characters"
 	}
 
-	// Validate phone number.
 	if input.Phone == "" {
 		errs["phone"] = "phone number is required"
 	} else if !deliveryPhoneRegex.MatchString(input.Phone) {
-		errs["phone"] = "phone number must be a valid UK number"
+		errs["phone"] = "phone number must be a valid UK number, e.g. 01131234567 or +441131234567"
 	}
 
-	// Validate address.
 	if input.Address == "" {
 		errs["address"] = "delivery address is required"
+	} else if len(input.Address) > maxDeliveryAddressLength {
+		errs["address"] = "delivery address cannot exceed 200 characters"
 	}
 
-	// Validate city.
 	if input.City == "" {
 		errs["city"] = "city is required"
+	} else if len(input.City) > maxDeliveryCityLength {
+		errs["city"] = "city cannot exceed 100 characters"
 	}
 
-	// Validate state.
 	if input.State == "" {
 		errs["state"] = "state is required"
+	} else if len(input.State) > maxDeliveryStateLength {
+		errs["state"] = "state cannot exceed 100 characters"
+	}
+
+	if len(input.DeliveryInstructions) > maxDeliveryInstructionsLength {
+		errs["delivery_instructions"] = "delivery instructions cannot exceed 500 characters"
 	}
 
 	return errs

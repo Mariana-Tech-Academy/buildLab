@@ -29,25 +29,21 @@ func (h *OrderHandler) ValidateDeliveryInfo(w http.ResponseWriter, r *http.Reque
 	// Create a variable to store the customer's delivery information.
 	var input service.DeliveryInfoInput
 
-	// Decode the JSON request body into the delivery information structure.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		utils.Error(w, http.StatusBadRequest, "Invalid JSON request body")
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	// Call the service layer to validate the delivery information.
-	validationErrors := service.ValidateDeliveryInfo(&input)
-
-	// If validation fails, return HTTP 400 with the specific field errors.
+	validationErrors := h.OrderService.ValidateDeliveryInfo(&input)
 	if len(validationErrors) > 0 {
-		utils.JSON(w, http.StatusBadRequest, utils.Response{
+		utils.JSON(w, http.StatusUnprocessableEntity, utils.Response{
 			Success: false,
-			Message: "Delivery information validation failed",
+			Message: "delivery information is invalid",
 			Data:    validationErrors,
 		})
 		return
 	}
 
-	// If validation succeeds, return HTTP 200 with the validated details.
-	utils.Success(w, http.StatusOK, "Delivery information is valid", input)
+	utils.Success(w, http.StatusOK, "delivery information is valid", input)
 }

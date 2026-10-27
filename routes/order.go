@@ -1,15 +1,17 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
 	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
+
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
-	"net/http"
 )
 
 func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
@@ -32,5 +34,5 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	staff := protected(router, tokens, blacklist)
 	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_, _, _, _ = orderHandler, customer, authed, staff
+	_, _ = authed, staff
 }
