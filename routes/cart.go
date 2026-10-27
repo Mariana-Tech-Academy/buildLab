@@ -18,9 +18,11 @@ func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 
 	// Create the repository responsible for retrieving restaurant menu items.
 	menuRepo := repository.NewMenuRepository(db)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+	restaurantService := service.NewRestaurantService(restaurantRepo)
 
-	// Give the cart service access to both repositories.
-	cartService := service.NewCartService(cartRepo, menuRepo)
+	// Give the cart service access to cart, menu, and restaurant data.
+	cartService := service.NewCartService(cartRepo, menuRepo, restaurantService)
 
 	// Connect the cart service to the HTTP handler.
 	cartHandler := handlers.NewCartHandler(cartService)
@@ -34,6 +36,4 @@ func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	// /cart/items is the endpoint Postman will call.
 	// AddItemToCart is the handler that processes the request.
 	customer.HandleFunc("/cart/items", cartHandler.AddItemToCart).Methods("POST")
-
-	_, _ = cartHandler, customer
 }

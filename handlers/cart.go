@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 
 	"Fhub/auth"
 	"Fhub/service"
+	"Fhub/utils"
 )
 
 // CartHandler connects HTTP requests to the cart business logic.
@@ -18,54 +21,69 @@ func NewCartHandler(cartService service.CartService) *CartHandler {
 	return &CartHandler{CartService: cartService}
 }
 
+type cartItemResponse struct {
+	CartID       uint   `json:"cart_id"`
+	RestaurantID uint   `json:"restaurant_id"`
+	MenuItemID   uint   `json:"menu_item_id"`
+	Name         string `json:"name"`
+	Quantity     int    `json:"quantity"`
+	Price        int64  `json:"price"`
+}
+
 // AddItemToCart handles requests to add menu items to a customer's cart.
 func (h *CartHandler) AddItemToCart(w http.ResponseWriter, r *http.Request) {
-
-	// STEP 1: Read the authenticated customer's details from the JWT context.
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
-	// STEP 2: Define the JSON fields expected from Postman.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	var request struct {
 		MenuItemID uint `json:"menu_item_id"`
 		Quantity   int  `json:"quantity"`
 	}
-
-	// STEP 3: Convert the incoming JSON into our request structure.
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if request.MenuItemID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
 		return
 	}
 
-	// STEP 4: Check that the menu item ID and quantity are valid.
-	if request.MenuItemID == 0 || request.Quantity < 1 {
-		http.Error(w, "Invalid menu item ID or quantity", http.StatusBadRequest)
-		return
-	}
-
-	// STEP 5: Call the service to add the item to this customer's cart.
-	cart, err := h.CartService.AddItemToCart(
+	item, err := h.CartService.AddItemToCart(
 		r.Context(),
 		claims.UserID,
 		request.MenuItemID,
 		request.Quantity,
 	)
-
-	// STEP 6: Return an error if the cart operation fails.
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeCartError(w, err)
 		return
 	}
 
-	// STEP 7: Tell the client that the request succeeded.
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	utils.Success(w, http.StatusOK, "item added to cart", cartItemResponse{
+		CartID:       item.CartID,
+		RestaurantID: item.RestaurantID,
+		MenuItemID:   item.MenuItemID,
+		Name:         item.Name,
+		Quantity:     item.Quantity,
+		Price:        item.Price,
+	})
+}
 
-	// STEP 8: Return the updated cart as JSON.
-	if err := json.NewEncoder(w).Encode(cart); err != nil {
-		return
+func writeCartError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidCartInput):
+		utils.Error(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, service.ErrMenuItemNotFound):
+		utils.Error(w, http.StatusNotFound, "menu item not found")
+	case errors.Is(err, service.ErrCartRestaurantConflict):
+		utils.Error(w, http.StatusConflict, "cannot add items from different restaurants")
+	default:
+		log.Printf("cart handler: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
 	}
 }
