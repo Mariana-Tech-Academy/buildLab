@@ -15,6 +15,7 @@ type UserRepository interface {
 	EmailExists(ctx context.Context, email string) (bool, error)
 	CreateWithCart(ctx context.Context, user *models.User) error
 	UpdatePassword(ctx context.Context, id uint, newHash string) error
+	SetRole(ctx context.Context, id uint, role models.Role) error
 }
 
 type PostgresUserRepo struct {
@@ -85,6 +86,17 @@ func (r *PostgresUserRepo) UpdatePassword(ctx context.Context, id uint, newHash 
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *PostgresUserRepo) SetRole(ctx context.Context, id uint, role models.Role) error {
+	res := r.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).UpdateColumn("role", role)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
