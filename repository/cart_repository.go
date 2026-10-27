@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrDifferentRestaurant = errors.New("cannot add items from different restaurants")
+	ErrDifferentRestaurant = errors.New("cart contains items from another restaurant; clear the cart before adding this item")
 	ErrQuantityLimit       = errors.New("quantity exceeds the maximum")
 )
 

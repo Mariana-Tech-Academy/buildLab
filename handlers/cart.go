@@ -82,7 +82,7 @@ func writeCartError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrMenuItemNotFound):
 		utils.Error(w, http.StatusNotFound, "menu item not found")
 	case errors.Is(err, service.ErrCartRestaurantConflict):
-		utils.Error(w, http.StatusConflict, "cannot add items from different restaurants")
+		utils.Error(w, http.StatusConflict, "cart contains items from another restaurant; clear the cart before adding this item")
 	case errors.Is(err, service.ErrCartItemNotFound):
 		utils.Error(w, http.StatusNotFound, "cart item not found")
 	default:

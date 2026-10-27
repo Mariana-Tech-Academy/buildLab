@@ -15,7 +15,7 @@ const maxCartItemQuantity = 99
 
 var (
 	ErrInvalidCartInput       = errors.New("invalid cart item")
-	ErrCartRestaurantConflict = errors.New("cannot add items from different restaurants")
+	ErrCartRestaurantConflict = errors.New("cart contains items from another restaurant; clear the cart before adding this item")
 	ErrCartItemNotFound       = errors.New("cart item not found")
 )
 
