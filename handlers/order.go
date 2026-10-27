@@ -1,11 +1,17 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
-
+	"Fhub/auth"
+	"Fhub/models"
 	"Fhub/service"
 	"Fhub/utils"
+	"encoding/json"
+	"errors"
+	"github.com/gorilla/mux"
+	"gorm.io/gorm"
+	"log"
+	"net/http"
+	"strconv"
 )
 
 // OrderHandler handles HTTP requests related to orders.
@@ -13,8 +19,89 @@ type OrderHandler struct {
 	OrderService service.OrderService
 }
 
-// NewOrderHandler creates a new order handler
-// and connects it to the order service.
+// orderCustomerResponse contains the customer's basic details.
+type orderCustomerResponse struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+}
+
+// orderItemResponse contains the details of each ordered item.
+type orderItemResponse struct {
+	Name      string `json:"name"`
+	UnitPrice int64  `json:"unit_price"`
+	Quantity  int    `json:"quantity"`
+	LineTotal int64  `json:"line_total"`
+}
+
+// restaurantOrderResponse contains the information shown to the manager.
+type restaurantOrderResponse struct {
+	ID                   uint                  `json:"id"`
+	OrderNumber          string                `json:"order_number"`
+	Status               models.OrderStatus    `json:"status"`
+	Customer             orderCustomerResponse `json:"customer"`
+	Items                []orderItemResponse   `json:"items"`
+	Subtotal             int64                 `json:"subtotal"`
+	DeliveryFee          int64                 `json:"delivery_fee"`
+	Total                int64                 `json:"total"`
+	DeliveryName         string                `json:"delivery_name"`
+	DeliveryPhone        string                `json:"delivery_phone"`
+	DeliveryAddress      string                `json:"delivery_address"`
+	DeliveryCity         string                `json:"delivery_city"`
+	DeliveryState        string                `json:"delivery_state"`
+	DeliveryInstructions string                `json:"delivery_instructions"`
+}
+
+// newRestaurantOrderResponse converts an order into a safe JSON response.
+func newRestaurantOrderResponse(order models.Order) restaurantOrderResponse {
+
+	// Create an empty slice to store the order items.
+	items := make([]orderItemResponse, 0, len(order.Items))
+
+	// Loop through each order item; _ ignores the index, and item holds the current item.
+	for _, item := range order.Items {
+
+		// Add the item's name, price, quantity and total to the response.
+		items = append(items, orderItemResponse{
+			Name:      item.Name,
+			UnitPrice: item.UnitPrice,
+			Quantity:  item.Quantity,
+			LineTotal: item.LineTotal,
+		})
+	}
+
+	// Return only the information the restaurant manager needs.
+	return restaurantOrderResponse{
+
+		// Basic order information.
+		ID:          order.ID,
+		OrderNumber: order.OrderNumber,
+		Status:      order.Status,
+
+		// Customer details without exposing sensitive account information.
+		Customer: orderCustomerResponse{
+			FirstName: order.Customer.FirstName,
+			LastName:  order.Customer.LastName,
+			Phone:     order.Customer.Phone,
+		},
+
+		// Ordered items and payment totals.
+		Items:       items,
+		Subtotal:    order.Subtotal,
+		DeliveryFee: order.DeliveryFee,
+		Total:       order.Total,
+
+		// Delivery information provided during checkout.
+		DeliveryName:         order.DeliveryName,
+		DeliveryPhone:        order.DeliveryPhone,
+		DeliveryAddress:      order.DeliveryAddress,
+		DeliveryCity:         order.DeliveryCity,
+		DeliveryState:        order.DeliveryState,
+		DeliveryInstructions: order.DeliveryInstructions,
+	}
+}
+
+// NewOrderHandler creates a new order handler and connects it to the order service.
 func NewOrderHandler(service service.OrderService) *OrderHandler {
 	return &OrderHandler{
 		OrderService: service,
@@ -45,5 +132,65 @@ func (h *OrderHandler) ValidateDeliveryInfo(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Return HTTP 200 OK with a success message and the validated delivery details.
 	utils.Success(w, http.StatusOK, "delivery information is valid", input)
+}
+
+// GetRestaurantOrders retrieves orders belonging to the manager's restaurant.
+func (h *OrderHandler) GetRestaurantOrders(w http.ResponseWriter, r *http.Request) {
+
+	// Get the authenticated manager's details from the JWT.
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	// Get the restaurant ID from the URL.
+	// mux.Vars gets the restaurant ID from the URL's {id} parameter.
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	// Get the optional order status.
+	status := r.URL.Query().Get("status")
+
+	/// Retrieve orders after checking restaurant ownership.
+	orders, err := h.OrderService.GetRestaurantOrders(r.Context(), claims.UserID, uint(restaurantID), status)
+	if err != nil {
+		switch {
+		// Reject invalid order statuses.
+		case errors.Is(err, service.ErrInvalidOrderStatus):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+
+		// Reject managers who do not own the restaurant.
+		case errors.Is(err, service.ErrOrderAccessDenied):
+			utils.Error(w, http.StatusForbidden, err.Error())
+
+		// Return 404 when the restaurant does not exist.
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+
+		// Handle unexpected database or server errors.
+		default:
+			log.Printf("get restaurant orders: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "could not retrieve restaurant orders")
+		}
+		return
+	}
+
+	/// Convert database orders into safe API responses.
+	response := make([]restaurantOrderResponse, 0, len(orders))
+
+	// Loop through each order; _ ignores the index, and order holds the current order.
+	for _, order := range orders {
+
+		// Convert each order into a safe response and add it to the response slice.
+		response = append(response, newRestaurantOrderResponse(order))
+	}
+
+	// Return the filtered orders to the manager.
+	utils.Success(w, http.StatusOK, "restaurant orders retrieved successfully", response)
 }

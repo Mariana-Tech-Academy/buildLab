@@ -15,8 +15,12 @@ import (
 )
 
 func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
+	// Create repositories for orders and restaurants.
 	repo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(repo)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+
+	// Pass both repositories into the order service.
+	orderService := service.NewOrderService(repo, restaurantRepo)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
 	// customer routes: POST /orders (checkout)
@@ -33,6 +37,9 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	// manager/admin routes: PATCH /orders/{id}/status
 	staff := protected(router, tokens, blacklist)
 	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
+
+	// ORD-04: Allow managers to view orders belonging to their restaurant.
+	staff.HandleFunc("/restaurants/{id}/orders", orderHandler.GetRestaurantOrders).Methods(http.MethodGet)
 
 	_, _ = authed, staff
 }

@@ -1,12 +1,12 @@
 package service
 
 import (
+	"Fhub/models"
+	"Fhub/repository"
 	"context"
 	"errors"
 	"regexp"
 	"strings"
-
-	"Fhub/repository"
 )
 
 const (
@@ -17,19 +17,37 @@ const (
 	maxDeliveryInstructionsLength = 500
 )
 
+// Error returned when a restaurant is inactive.
 var ErrRestaurantNotActive = errors.New("restaurant is not active")
 
+// Error returned when an invalid order status is provided.
+var ErrInvalidOrderStatus = errors.New("invalid order status")
+
+// Error returned when a manager does not own the restaurant.
+var ErrOrderAccessDenied = errors.New("you are not authorised to view this restaurant's orders")
+
+// OrderService defines the business operations related to orders.
 type OrderService interface {
+
+	// CanAcceptOrder checks whether a restaurant can accept orders.
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+
+	// ValidateDeliveryInfo checks the customer's delivery details.
 	ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string
+
+	// GetRestaurantOrders retrieves orders after checking the manager's access and requested status.
+	GetRestaurantOrders(ctx context.Context, managerID uint, restaurantID uint, status string) ([]models.Order, error)
 }
 
+// orderService stores the repositories used to manage orders.
 type orderService struct {
-	orderRepo repository.OrderRepository
+	orderRepo      repository.OrderRepository
+	restaurantRepo repository.RestaurantRepository
 }
 
-func NewOrderService(repo repository.OrderRepository) OrderService {
-	return &orderService{orderRepo: repo}
+// NewOrderService creates an order service with both repositories.
+func NewOrderService(orderRepo repository.OrderRepository, restaurantRepo repository.RestaurantRepository) OrderService {
+	return &orderService{orderRepo: orderRepo, restaurantRepo: restaurantRepo}
 }
 
 // CanAcceptOrder is used by checkout (when implemented) to reject orders
@@ -43,6 +61,51 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 		return ErrRestaurantNotActive
 	}
 	return nil
+}
+
+// GetRestaurantOrders validates the order status, checks restaurant ownership and retrieves the restaurant's orders.
+func (s *orderService) GetRestaurantOrders(ctx context.Context, managerID uint, restaurantID uint, status string) ([]models.Order, error) {
+
+	// Reject invalid order statuses before searching the database.
+	if !isValidOrderStatus(status) {
+		return nil, ErrInvalidOrderStatus
+	}
+	// Find the restaurant using its ID.
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reject managers who do not own the restaurant.
+	if restaurant.ManagerID != managerID {
+		return nil, ErrOrderAccessDenied
+	}
+
+	// Retrieve the restaurant's orders, optionally filtered by status.
+	return s.orderRepo.GetRestaurantOrders(ctx, restaurantID, status)
+}
+
+// isValidOrderStatus checks whether the requested order status exists.
+func isValidOrderStatus(status string) bool {
+
+	// An empty status means the manager wants all orders.
+	if status == "" {
+		return true
+	}
+
+	// Check the status against the allowed order statuses.
+	switch models.OrderStatus(status) {
+	case models.OrderStatusPending,
+		models.OrderStatusConfirmed,
+		models.OrderStatusPreparing,
+		models.OrderStatusReadyForDelivery,
+		models.OrderStatusOutForDelivery,
+		models.OrderStatusDelivered,
+		models.OrderStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 // DeliveryInfoInput represents the delivery details
