@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -30,10 +32,11 @@ func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	// customer routes: GET /cart, POST /cart/items, PUT /cart/items/{id}, DELETE /cart/items/{id}, DELETE /cart
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
+	customer.HandleFunc("/cart/items/{id}", cartHandler.UpdateQuantity).Methods(http.MethodPut)
 
 	// CART-01: Allow authenticated customers to add menu items to their cart.
 	// POST means the customer is sending data to the server.
 	// /cart/items is the endpoint Postman will call.
 	// AddItemToCart is the handler that processes the request.
-	customer.HandleFunc("/cart/items", cartHandler.AddItemToCart).Methods("POST")
+	customer.HandleFunc("/cart/items", cartHandler.AddItemToCart).Methods(http.MethodPost)
 }

@@ -38,6 +38,12 @@ type CartRepository interface {
 
 	// AddItemForUser stores the cart restaurant and inserts or increments the line in one transaction.
 	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int) (cartID uint, newQuantity int, err error)
+
+	// GetCartWithItems finds a customer's cart, including its items and their menu details.
+	GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error)
+
+	// SetItemQuantity replaces a cart item's quantity when the item belongs to the given cart.
+	SetItemQuantity(ctx context.Context, cartID, cartItemID uint, quantity int) error
 }
 
 // PostgresCartRepo holds the database connection used by the repository.
@@ -265,6 +271,40 @@ func setCartItemQuantity(tx *gorm.DB, item *models.CartItem, current, add, maxQu
 		return 0, err
 	}
 	return updated, nil
+}
+
+// GetCartWithItems finds a customer's cart, including its items and their menu details.
+func (r *PostgresCartRepo) GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error) {
+	var cart models.Cart
+	err := r.db.WithContext(ctx).
+		Preload("Items", func(db *gorm.DB) *gorm.DB {
+			return db.Order("id ASC")
+		}).
+		Preload("Items.MenuItem").
+		Where("user_id = ?", userID).
+		First(&cart).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cart, nil
+}
+
+// SetItemQuantity replaces a cart item's quantity when the item belongs to the given cart.
+func (r *PostgresCartRepo) SetItemQuantity(ctx context.Context, cartID, cartItemID uint, quantity int) error {
+	if quantity < 1 {
+		return ErrQuantityLimit
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.CartItem{}).
+		Where("id = ? AND cart_id = ?", cartItemID, cartID).
+		Update("quantity", quantity)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func isUniqueViolation(err error) bool {
