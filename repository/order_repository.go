@@ -17,8 +17,15 @@ const DeliveryFee int64 = 200000
 
 // Checkout must create the order, create its items and clear the cart inside one
 // r.db.Transaction(func(tx *gorm.DB) error { ... }) call.
+// OrderRepository defines the database operations for orders.
 type OrderRepository interface {
+
+	// IsRestaurantActive checks if a restaurant is active and returns a boolean or an error.
 	IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error)
+
+	// GetRestaurantOrders retrieves one page of a restaurant's orders and optionally filters them by status.
+	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
+
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
 }
 
@@ -33,14 +40,42 @@ func NewOrderRepository(db *gorm.DB) OrderRepository {
 func (r *PostgresOrderRepo) IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error) {
 	var restaurant models.Restaurant
 
-	err := r.db.WithContext(ctx).
-		Select("status").
-		First(&restaurant, restaurantID).Error
+	err := r.db.WithContext(ctx).Select("status").First(&restaurant, restaurantID).Error
 	if err != nil {
 		return false, err
 	}
 
 	return restaurant.Status == models.RestaurantStatusActive, nil
+}
+
+// GetRestaurantOrders retrieves one page of orders belonging to a specific restaurant.
+// If no status is provided, orders of every status are included.
+func (r *PostgresOrderRepo) GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error) {
+	var total int64
+	if err := r.restaurantOrdersQuery(ctx, restaurantID, status).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var orders []models.Order
+	err := r.restaurantOrdersQuery(ctx, restaurantID, status).
+		Preload("Items").
+		Preload("Customer").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&orders).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+func (r *PostgresOrderRepo) restaurantOrdersQuery(ctx context.Context, restaurantID uint, status string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.Order{}).Where("restaurant_id = ?", restaurantID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
 }
 
 func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error) {

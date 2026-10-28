@@ -18,6 +18,8 @@ const (
 	maxDeliveryCityLength         = 100
 	maxDeliveryStateLength        = 100
 	maxDeliveryInstructionsLength = 500
+	defaultOrderPageSize          = 10
+	maxOrderPageSize              = 50
 )
 
 var (
@@ -26,18 +28,46 @@ var (
 	ErrUnavailableItem     = errors.New("cart contains an unavailable item")
 )
 
+// Error returned when an invalid order status is provided.
+var ErrInvalidOrderStatus = errors.New("invalid order status")
+
+// Error returned when a manager does not own the restaurant.
+var ErrOrderAccessDenied = errors.New("you are not authorised to view this restaurant's orders")
+
+var ErrInvalidOrderPage = errors.New("limit must be between 1 and 50")
+
+// OrderService defines the business operations related to orders.
 type OrderService interface {
+
+	// CanAcceptOrder checks whether a restaurant can accept orders.
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
+
+	// ValidateDeliveryInfo checks the customer's delivery details.
 	ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string
+
+	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
+	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
 }
 
+// RestaurantOrdersPage is one page of orders for a restaurant.
+type RestaurantOrdersPage struct {
+	Orders []models.Order
+	Page   int
+	Limit  int
+	Total  int64
+}
+
+// orderService stores the repositories used to manage orders.
 type orderService struct {
-	orderRepo repository.OrderRepository
+	orderRepo      repository.OrderRepository
+	restaurantRepo repository.RestaurantRepository
 }
 
-func NewOrderService(repo repository.OrderRepository) OrderService {
-	return &orderService{orderRepo: repo}
+// NewOrderService creates an order service with both repositories.
+func NewOrderService(orderRepo repository.OrderRepository, restaurantRepo repository.RestaurantRepository) OrderService {
+	return &orderService{orderRepo: orderRepo, restaurantRepo: restaurantRepo}
 }
 
 // CanAcceptOrder is used by checkout (when implemented) to reject orders
@@ -51,6 +81,72 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 		return ErrRestaurantNotActive
 	}
 	return nil
+}
+
+// GetRestaurantOrders validates the order status, checks restaurant ownership and retrieves one page of orders.
+func (s *orderService) GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error) {
+	if !isValidOrderStatus(status) {
+		return nil, ErrInvalidOrderStatus
+	}
+
+	page, limit, offset, err := orderPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrRestaurantNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if role != models.RoleAdmin && restaurant.ManagerID != managerID {
+		return nil, ErrOrderAccessDenied
+	}
+
+	orders, total, err := s.orderRepo.GetRestaurantOrders(ctx, restaurantID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &RestaurantOrdersPage{Orders: orders, Page: page, Limit: limit, Total: total}, nil
+}
+
+func orderPageBounds(page, limit int) (int, int, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = defaultOrderPageSize
+	}
+	if limit > maxOrderPageSize {
+		return 0, 0, 0, ErrInvalidOrderPage
+	}
+	return page, limit, (page - 1) * limit, nil
+}
+
+// isValidOrderStatus checks whether the requested order status exists.
+func isValidOrderStatus(status string) bool {
+
+	// An empty status means the manager wants all orders.
+	if status == "" {
+		return true
+	}
+
+	// Check the status against the allowed order statuses.
+	switch models.OrderStatus(status) {
+	case models.OrderStatusPending,
+		models.OrderStatusConfirmed,
+		models.OrderStatusPreparing,
+		models.OrderStatusReadyForDelivery,
+		models.OrderStatusOutForDelivery,
+		models.OrderStatusDelivered,
+		models.OrderStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *orderService) GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error) {
