@@ -1,14 +1,195 @@
 package service
 
-import "Fhub/repository"
+import (
+	"context"
+	"errors"
+	"fmt"
 
+	"Fhub/models"
+	"Fhub/repository"
+
+	"gorm.io/gorm"
+)
+
+const maxCartItemQuantity = 99
+
+var (
+	ErrInvalidCartInput       = errors.New("invalid cart item")
+	ErrCartRestaurantConflict = errors.New("cart contains items from another restaurant; clear the cart before adding this item")
+	ErrCartItemNotFound       = errors.New("cart item not found")
+)
+
+// AddedCartItem is the line stored for the customer.
+type AddedCartItem struct {
+	CartID       uint
+	RestaurantID uint
+	MenuItemID   uint
+	Name         string
+	Quantity     int
+	Price        int64
+}
+
+// CartService defines the shopping cart operations available to handlers.
 type CartService interface {
+	AddItemToCart(
+		ctx context.Context,
+		userID uint,
+		menuItemID uint,
+		quantity int,
+	) (*AddedCartItem, error)
+	UpdateQuantity(ctx context.Context, userID, cartItemID uint, input UpdateCartQuantityInput) (*models.Cart, error)
+	RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error)
+	Clear(ctx context.Context, userID uint) (*models.Cart, error)
 }
 
+// UpdateCartQuantityInput holds the new quantity sent by the customer.
+type UpdateCartQuantityInput struct {
+	Quantity int
+}
+
+// cartService contains the repositories needed for cart operations.
 type cartService struct {
-	cartRepo repository.CartRepository
+	cartRepo          repository.CartRepository
+	menuRepo          repository.MenuRepository
+	restaurantService RestaurantService
 }
 
-func NewCartService(repo repository.CartRepository) CartService {
-	return &cartService{cartRepo: repo}
+// NewCartService creates a cart service with access to cart, menu, and restaurant data.
+func NewCartService(
+	cartRepo repository.CartRepository,
+	menuRepo repository.MenuRepository,
+	restaurants RestaurantService,
+) CartService {
+	return &cartService{
+		cartRepo:          cartRepo,
+		menuRepo:          menuRepo,
+		restaurantService: restaurants,
+	}
+}
+
+// AddItemToCart adds a menu item to the authenticated customer's cart.
+func (s *cartService) AddItemToCart(
+	ctx context.Context,
+	userID uint,
+	menuItemID uint,
+	quantity int,
+) (*AddedCartItem, error) {
+	if menuItemID == 0 {
+		return nil, fmt.Errorf("%w: menu item ID is required", ErrInvalidCartInput)
+	}
+	if quantity < 1 || quantity > maxCartItemQuantity {
+		return nil, fmt.Errorf("%w: quantity must be between 1 and %d", ErrInvalidCartInput, maxCartItemQuantity)
+	}
+
+	menuItem, err := s.menuRepo.GetMenuItemByID(ctx, menuItemID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrMenuItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !menuItem.Available {
+		return nil, ErrMenuItemNotFound
+	}
+	if _, err := s.restaurantService.GetActiveRestaurant(ctx, menuItem.RestaurantID); err != nil {
+		if errors.Is(err, ErrRestaurantNotFound) {
+			return nil, ErrMenuItemNotFound
+		}
+		return nil, err
+	}
+
+	cartID, newQuantity, err := s.cartRepo.AddItemForUser(
+		ctx,
+		userID,
+		menuItem.RestaurantID,
+		menuItem.ID,
+		quantity,
+		maxCartItemQuantity,
+	)
+	if errors.Is(err, repository.ErrDifferentRestaurant) {
+		return nil, ErrCartRestaurantConflict
+	}
+	if errors.Is(err, repository.ErrQuantityLimit) {
+		return nil, fmt.Errorf("%w: quantity cannot exceed %d", ErrInvalidCartInput, maxCartItemQuantity)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &AddedCartItem{
+		CartID:       cartID,
+		RestaurantID: menuItem.RestaurantID,
+		MenuItemID:   menuItem.ID,
+		Name:         menuItem.Name,
+		Quantity:     newQuantity,
+		Price:        menuItem.Price,
+	}, nil
+}
+
+// UpdateQuantity replaces the quantity of a line in the customer's own cart.
+func (s *cartService) UpdateQuantity(ctx context.Context, userID, cartItemID uint, input UpdateCartQuantityInput) (*models.Cart, error) {
+	if cartItemID == 0 {
+		return nil, fmt.Errorf("%w: cart item ID is required", ErrInvalidCartInput)
+	}
+	if input.Quantity < 1 || input.Quantity > maxCartItemQuantity {
+		return nil, fmt.Errorf("%w: quantity must be between 1 and %d", ErrInvalidCartInput, maxCartItemQuantity)
+	}
+
+	cart, err := s.cartRepo.GetCartWithItems(ctx, userID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrCartItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var line *models.CartItem
+	for i := range cart.Items {
+		if cart.Items[i].ID == cartItemID {
+			line = &cart.Items[i]
+			break
+		}
+	}
+	if line == nil {
+		return nil, ErrCartItemNotFound
+	}
+	if line.MenuItem.ID == 0 || !line.MenuItem.Available {
+		return nil, ErrMenuItemNotFound
+	}
+	if _, err := s.restaurantService.GetActiveRestaurant(ctx, line.MenuItem.RestaurantID); err != nil {
+		if errors.Is(err, ErrRestaurantNotFound) {
+			return nil, ErrMenuItemNotFound
+		}
+		return nil, err
+	}
+
+	err = s.cartRepo.SetItemQuantity(ctx, cart.ID, cartItemID, input.Quantity)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrCartItemNotFound
+	}
+	if errors.Is(err, repository.ErrQuantityLimit) {
+		return nil, fmt.Errorf("%w: quantity must be between 1 and %d", ErrInvalidCartInput, maxCartItemQuantity)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return s.cartRepo.GetCartWithItems(ctx, userID)
+}
+
+// RemoveItem deletes one line from the customer's cart.
+func (s *cartService) RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error) {
+	if itemID == 0 {
+		return nil, fmt.Errorf("%w: cart item ID is required", ErrInvalidCartInput)
+	}
+	cart, err := s.cartRepo.RemoveItem(ctx, userID, itemID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrCartItemNotFound
+	}
+	return cart, err
+}
+
+// Clear removes every line and clears the cart restaurant.
+func (s *cartService) Clear(ctx context.Context, userID uint) (*models.Cart, error) {
+	return s.cartRepo.Clear(ctx, userID)
 }
