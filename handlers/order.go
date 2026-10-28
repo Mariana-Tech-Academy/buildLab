@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 
+	"Fhub/auth"
 	"Fhub/service"
 	"Fhub/utils"
 )
@@ -46,4 +49,33 @@ func (h *OrderHandler) ValidateDeliveryInfo(w http.ResponseWriter, r *http.Reque
 	}
 
 	utils.Success(w, http.StatusOK, "delivery information is valid", input)
+}
+
+func (h *OrderHandler) GetCheckoutSummary(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	summary, err := h.OrderService.GetCheckoutSummary(
+		r.Context(),
+		claims.UserID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmptyCart):
+			utils.Error(w, http.StatusUnprocessableEntity, "cannot checkout with an empty cart")
+		case errors.Is(err, service.ErrUnavailableItem):
+			utils.Error(w, http.StatusConflict, "cart contains an unavailable item")
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		default:
+			log.Printf("checkout summary: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "checkout summary", summary)
 }

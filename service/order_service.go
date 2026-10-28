@@ -6,7 +6,10 @@ import (
 	"regexp"
 	"strings"
 
+	"Fhub/models"
 	"Fhub/repository"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -17,10 +20,15 @@ const (
 	maxDeliveryInstructionsLength = 500
 )
 
-var ErrRestaurantNotActive = errors.New("restaurant is not active")
+var (
+	ErrRestaurantNotActive = errors.New("restaurant is not active")
+	ErrEmptyCart           = errors.New("cannot checkout with an empty cart")
+	ErrUnavailableItem     = errors.New("cart contains an unavailable item")
+)
 
 type OrderService interface {
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
 	ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string
 }
 
@@ -43,6 +51,31 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 		return ErrRestaurantNotActive
 	}
 	return nil
+}
+
+func (s *orderService) GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error) {
+	summary, err := s.orderRepo.GetCheckoutSummary(ctx, customerID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrEmptyCart):
+			return nil, ErrEmptyCart
+		case errors.Is(err, repository.ErrUnavailableItem):
+			return nil, ErrUnavailableItem
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, ErrRestaurantNotFound
+		default:
+			return nil, err
+		}
+	}
+
+	if err := s.CanAcceptOrder(ctx, summary.RestaurantID); err != nil {
+		if errors.Is(err, ErrRestaurantNotActive) || errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRestaurantNotFound
+		}
+		return nil, err
+	}
+
+	return summary, nil
 }
 
 // DeliveryInfoInput represents the delivery details
