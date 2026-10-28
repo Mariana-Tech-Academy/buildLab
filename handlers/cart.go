@@ -165,3 +165,40 @@ func (h *CartHandler) UpdateQuantity(w http.ResponseWriter, r *http.Request) {
 
 	utils.Success(w, http.StatusOK, "cart item quantity updated", newUpdatedCartResponse(cart))
 }
+
+// RemoveItem handles DELETE /api/cart/items/{id}.
+func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	cartItemID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	cart, err := h.CartService.RemoveItem(r.Context(), claims.UserID, cartItemID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "cart item removed", newUpdatedCartResponse(cart))
+}
+
+// Clear handles DELETE /api/cart.
+func (h *CartHandler) Clear(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	cart, err := h.CartService.Clear(r.Context(), claims.UserID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "cart cleared", newUpdatedCartResponse(cart))
+}

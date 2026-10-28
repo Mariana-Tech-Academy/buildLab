@@ -33,6 +33,8 @@ func CartRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
 	customer.HandleFunc("/cart/items/{id}", cartHandler.UpdateQuantity).Methods(http.MethodPut)
+	customer.HandleFunc("/cart/items/{id}", cartHandler.RemoveItem).Methods(http.MethodDelete)
+	customer.HandleFunc("/cart", cartHandler.Clear).Methods(http.MethodDelete)
 
 	// CART-01: Allow authenticated customers to add menu items to their cart.
 	// POST means the customer is sending data to the server.

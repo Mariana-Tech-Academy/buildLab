@@ -1,17 +1,19 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+	"strconv"
+	"time"
+
 	"Fhub/auth"
 	"Fhub/models"
 	"Fhub/service"
 	"Fhub/utils"
-	"encoding/json"
-	"errors"
+
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
-	"log"
-	"net/http"
-	"strconv"
 )
 
 // OrderHandler handles HTTP requests related to orders.
@@ -39,6 +41,7 @@ type restaurantOrderResponse struct {
 	ID                   uint                  `json:"id"`
 	OrderNumber          string                `json:"order_number"`
 	Status               models.OrderStatus    `json:"status"`
+	CreatedAt            time.Time             `json:"created_at"`
 	Customer             orderCustomerResponse `json:"customer"`
 	Items                []orderItemResponse   `json:"items"`
 	Subtotal             int64                 `json:"subtotal"`
@@ -77,6 +80,7 @@ func newRestaurantOrderResponse(order models.Order) restaurantOrderResponse {
 		ID:          order.ID,
 		OrderNumber: order.OrderNumber,
 		Status:      order.Status,
+		CreatedAt:   order.CreatedAt,
 
 		// Customer details without exposing sensitive account information.
 		Customer: orderCustomerResponse{
@@ -142,7 +146,7 @@ func (h *OrderHandler) GetRestaurantOrders(w http.ResponseWriter, r *http.Reques
 	// Get the authenticated manager's details from the JWT.
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
-		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
@@ -154,43 +158,74 @@ func (h *OrderHandler) GetRestaurantOrders(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get the optional order status.
 	status := r.URL.Query().Get("status")
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
 
-	/// Retrieve orders after checking restaurant ownership.
-	orders, err := h.OrderService.GetRestaurantOrders(r.Context(), claims.UserID, uint(restaurantID), status)
+	result, err := h.OrderService.GetRestaurantOrders(r.Context(), claims.UserID, claims.Role, uint(restaurantID), status, page, limit)
 	if err != nil {
 		switch {
-		// Reject invalid order statuses.
-		case errors.Is(err, service.ErrInvalidOrderStatus):
+		case errors.Is(err, service.ErrInvalidOrderStatus), errors.Is(err, service.ErrInvalidOrderPage):
 			utils.Error(w, http.StatusBadRequest, err.Error())
-
-		// Reject managers who do not own the restaurant.
 		case errors.Is(err, service.ErrOrderAccessDenied):
 			utils.Error(w, http.StatusForbidden, err.Error())
-
-		// Return 404 when the restaurant does not exist.
-		case errors.Is(err, gorm.ErrRecordNotFound):
+		case errors.Is(err, service.ErrRestaurantNotFound):
 			utils.Error(w, http.StatusNotFound, "restaurant not found")
-
-		// Handle unexpected database or server errors.
 		default:
 			log.Printf("get restaurant orders: %v", err)
-			utils.Error(w, http.StatusInternalServerError, "could not retrieve restaurant orders")
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
 		}
 		return
 	}
 
-	/// Convert database orders into safe API responses.
-	response := make([]restaurantOrderResponse, 0, len(orders))
-
-	// Loop through each order; _ ignores the index, and order holds the current order.
-	for _, order := range orders {
-
-		// Convert each order into a safe response and add it to the response slice.
-		response = append(response, newRestaurantOrderResponse(order))
+	items := make([]restaurantOrderResponse, 0, len(result.Orders))
+	for _, order := range result.Orders {
+		items = append(items, newRestaurantOrderResponse(order))
 	}
 
-	// Return the filtered orders to the manager.
-	utils.Success(w, http.StatusOK, "restaurant orders retrieved successfully", response)
+	utils.Success(w, http.StatusOK, "restaurant orders retrieved successfully", restaurantOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type restaurantOrdersResponse struct {
+	Items []restaurantOrderResponse `json:"items"`
+	Page  int                       `json:"page"`
+	Limit int                       `json:"limit"`
+	Total int64                     `json:"total"`
+}
+
+func (h *OrderHandler) GetCheckoutSummary(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	summary, err := h.OrderService.GetCheckoutSummary(
+		r.Context(),
+		claims.UserID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmptyCart):
+			utils.Error(w, http.StatusUnprocessableEntity, "cannot checkout with an empty cart")
+		case errors.Is(err, service.ErrUnavailableItem):
+			utils.Error(w, http.StatusConflict, "cart contains an unavailable item")
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		default:
+			log.Printf("checkout summary: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "checkout summary", summary)
 }
