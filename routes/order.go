@@ -1,13 +1,14 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
 	"Fhub/models"
 	"Fhub/repository"
 	"Fhub/service"
-	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -22,7 +23,9 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
 	customer.HandleFunc("/orders/checkout/summary", orderHandler.GetCheckoutSummary).Methods(http.MethodGet)
-	
+
+	// CHK-02: Allow authenticated customers to validate delivery information.
+	customer.HandleFunc("/orders/delivery/validate", orderHandler.ValidateDeliveryInfo).Methods(http.MethodPost)
 
 	// authenticated routes: GET /orders, GET /orders/{id}
 	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
@@ -32,11 +35,5 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	staff := protected(router, tokens, blacklist)
 	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_, _, _, _ = orderHandler, customer, authed, staff
+	_, _ = authed, staff
 }
-
-
-
-
-
- 

@@ -38,11 +38,6 @@ type Order struct {
 	Items []OrderItem `json:"items"`
 }
 
-
-
-
-
-
 type CheckoutItem struct {
 	MenuItemID uint   `json:"menu_item_id"`
 	Name       string `json:"name"`
@@ -59,17 +54,3 @@ type CheckoutSummary struct {
 	DeliveryFee    int64          `json:"delivery_fee"`
 	Total          int64          `json:"total"`
 }
-
-
-// func (c *CheckoutSummary) CalculateTotal() {
-//     c.Subtotal = 0
-
-//     for i := range c.Items {
-//         c.Items[i].LineTotal =
-//             int64(c.Items[i].Quantity) * c.Items[i].UnitPrice
-
-//         c.Subtotal += c.Items[i].LineTotal
-//     }
-
-//     c.Total = c.Subtotal + c.DeliveryFee
-// }

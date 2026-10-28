@@ -12,7 +12,8 @@ import (
 var ErrEmptyCart = errors.New("cannot checkout with an empty cart")
 var ErrUnavailableItem = errors.New("cart contains an unavailable item")
 
-const DeliveryFee int64 = 200000 // ₦2,000 in kobo
+// DeliveryFee is a fixed checkout fee of 2000.00 in minor units.
+const DeliveryFee int64 = 200000
 
 // Checkout must create the order, create its items and clear the cart inside one
 // r.db.Transaction(func(tx *gorm.DB) error { ... }) call.
@@ -63,13 +64,13 @@ func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID u
 	}
 
 	if cart.Restaurant == nil {
-		return nil, errors.New("cart restaurant not found")
+		return nil, gorm.ErrRecordNotFound
 	}
 
 	summary := &models.CheckoutSummary{
 		RestaurantID:   cart.Restaurant.ID,
 		RestaurantName: cart.Restaurant.Name,
-		Items:          make([]models.CheckoutItem, 0, len(cart.Items)), //
+		Items:          make([]models.CheckoutItem, 0, len(cart.Items)),
 		DeliveryFee:    DeliveryFee,
 	}
 	for _, item := range cart.Items {
