@@ -22,6 +22,7 @@ type OrderRepository interface {
 
 	// IsRestaurantActive checks if a restaurant is active and returns a boolean or an error.
 	IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error)
+	GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error)
 
 	// GetRestaurantOrders retrieves one page of a restaurant's orders and optionally filters them by status.
 	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
@@ -46,6 +47,22 @@ func (r *PostgresOrderRepo) IsRestaurantActive(ctx context.Context, restaurantID
 	}
 
 	return restaurant.Status == models.RestaurantStatusActive, nil
+}
+
+// Loads all items associated with the order so the customer can view their order details.
+func (r *PostgresOrderRepo) GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error) {
+	var order models.Order
+
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Preload("Restaurant").
+		Where("id = ? AND customer_id = ?", orderID, customerID).
+		First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &order, nil
 }
 
 // GetRestaurantOrders retrieves one page of orders belonging to a specific restaurant.

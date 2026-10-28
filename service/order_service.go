@@ -36,11 +36,14 @@ var ErrOrderAccessDenied = errors.New("you are not authorised to view this resta
 
 var ErrInvalidOrderPage = errors.New("limit must be between 1 and 50")
 
+var ErrOrderNotFound = errors.New("order not found")
+
 // OrderService defines the business operations related to orders.
 type OrderService interface {
 
 	// CanAcceptOrder checks whether a restaurant can accept orders.
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+	GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error)
 
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
 
@@ -81,6 +84,19 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 		return ErrRestaurantNotActive
 	}
 	return nil
+}
+
+// GetOrderByID retrieves an order using the order ID and customer ID.
+// Returns the order details if found, or an error if no matching order exists.
+func (s *orderService) GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error) {
+	order, err := s.orderRepo.GetOrderByID(ctx, orderID, customerID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return order, nil
 }
 
 // GetRestaurantOrders validates the order status, checks restaurant ownership and retrieves one page of orders.

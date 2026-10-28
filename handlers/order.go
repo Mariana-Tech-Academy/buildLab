@@ -229,3 +229,82 @@ func (h *OrderHandler) GetCheckoutSummary(w http.ResponseWriter, r *http.Request
 
 	utils.Success(w, http.StatusOK, "checkout summary", summary)
 }
+
+// customerOrderResponse is one order as seen by the customer who placed it.
+type customerOrderResponse struct {
+	ID                   uint                `json:"id"`
+	OrderNumber          string              `json:"order_number"`
+	Status               models.OrderStatus  `json:"status"`
+	CreatedAt            time.Time           `json:"created_at"`
+	RestaurantID         uint                `json:"restaurant_id"`
+	RestaurantName       string              `json:"restaurant_name"`
+	Items                []orderItemResponse `json:"items"`
+	Subtotal             int64               `json:"subtotal"`
+	DeliveryFee          int64               `json:"delivery_fee"`
+	Total                int64               `json:"total"`
+	DeliveryName         string              `json:"delivery_name"`
+	DeliveryPhone        string              `json:"delivery_phone"`
+	DeliveryAddress      string              `json:"delivery_address"`
+	DeliveryCity         string              `json:"delivery_city"`
+	DeliveryState        string              `json:"delivery_state"`
+	DeliveryInstructions string              `json:"delivery_instructions"`
+}
+
+func newCustomerOrderResponse(order *models.Order) customerOrderResponse {
+	items := make([]orderItemResponse, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, orderItemResponse{
+			Name:      item.Name,
+			UnitPrice: item.UnitPrice,
+			Quantity:  item.Quantity,
+			LineTotal: item.LineTotal,
+		})
+	}
+	return customerOrderResponse{
+		ID:                   order.ID,
+		OrderNumber:          order.OrderNumber,
+		Status:               order.Status,
+		CreatedAt:            order.CreatedAt,
+		RestaurantID:         order.RestaurantID,
+		RestaurantName:       order.Restaurant.Name,
+		Items:                items,
+		Subtotal:             order.Subtotal,
+		DeliveryFee:          order.DeliveryFee,
+		Total:                order.Total,
+		DeliveryName:         order.DeliveryName,
+		DeliveryPhone:        order.DeliveryPhone,
+		DeliveryAddress:      order.DeliveryAddress,
+		DeliveryCity:         order.DeliveryCity,
+		DeliveryState:        order.DeliveryState,
+		DeliveryInstructions: order.DeliveryInstructions,
+	}
+}
+
+// GetOrderByID retrieves an order using its ID.
+func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
+	orderID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || orderID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid order ID")
+		return
+	}
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	order, err := h.OrderService.GetOrderByID(
+		r.Context(),
+		uint(orderID),
+		claims.UserID,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			utils.Error(w, http.StatusNotFound, "order not found")
+			return
+		}
+		log.Printf("get order: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
+}
