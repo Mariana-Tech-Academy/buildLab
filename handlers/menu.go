@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"Fhub/auth"
@@ -250,4 +251,115 @@ func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) 
 		responses = append(responses, newMenuItemResponse(&items[i]))
 	}
 	utils.Success(w, http.StatusOK, "menu retrieved successfully", responses)
+}
+
+// Search handles GET /api/menu/search.
+// Price filters are minor units: 500 means 5.00.
+func (h *MenuHandler) Search(w http.ResponseWriter, r *http.Request) {
+	input, message := menuSearchInput(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.MenuService.Search(r.Context(), input)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	items := make([]menuItemResponse, 0, len(result.Items))
+	for i := range result.Items {
+		items = append(items, newMenuItemResponse(&result.Items[i]))
+	}
+	message = "menu items retrieved successfully"
+	if result.Total == 0 {
+		message = "No menu items found. Try another name or filter."
+	}
+	utils.Success(w, http.StatusOK, message, menuSearchResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type menuSearchResponse struct {
+	Items []menuItemResponse `json:"items"`
+	Page  int                `json:"page"`
+	Limit int                `json:"limit"`
+	Total int64              `json:"total"`
+}
+
+func menuSearchInput(r *http.Request) (service.MenuSearchInput, string) {
+	params := r.URL.Query()
+	input := service.MenuSearchInput{Name: strings.TrimSpace(params.Get("name"))}
+
+	page, ok := parseMenuQueryInt(params.Get("page"))
+	if !ok {
+		return input, "page must be a positive whole number"
+	}
+	limit, ok := parseMenuQueryInt(params.Get("limit"))
+	if !ok {
+		return input, "limit must be a positive whole number"
+	}
+	if limit > 50 {
+		return input, "limit must be between 1 and 50"
+	}
+	input.Page = page
+	input.Limit = limit
+
+	if params.Has("category_id") {
+		id, err := strconv.ParseUint(params.Get("category_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid category ID"
+		}
+		categoryID := uint(id)
+		input.CategoryID = &categoryID
+	}
+	if params.Has("restaurant_id") {
+		id, err := strconv.ParseUint(params.Get("restaurant_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid restaurant ID"
+		}
+		restaurantID := uint(id)
+		input.RestaurantID = &restaurantID
+	}
+	if params.Has("min_price") {
+		price, err := strconv.ParseInt(params.Get("min_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid min_price"
+		}
+		input.MinPrice = &price
+	}
+	if params.Has("max_price") {
+		price, err := strconv.ParseInt(params.Get("max_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid max_price"
+		}
+		input.MaxPrice = &price
+	}
+	if input.MinPrice != nil && input.MaxPrice != nil && *input.MinPrice > *input.MaxPrice {
+		return input, "min_price cannot exceed max_price"
+	}
+	if params.Has("available") {
+		raw := params.Get("available")
+		if raw != "true" && raw != "false" {
+			return input, "available must be true or false"
+		}
+		available := raw == "true"
+		input.Available = &available
+	}
+	return input, ""
+}
+
+func parseMenuQueryInt(value string) (int, bool) {
+	if value == "" {
+		return 0, true
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
 }

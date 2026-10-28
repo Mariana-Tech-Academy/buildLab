@@ -38,6 +38,8 @@ type CartService interface {
 		quantity int,
 	) (*AddedCartItem, error)
 	UpdateQuantity(ctx context.Context, userID, cartItemID uint, input UpdateCartQuantityInput) (*models.Cart, error)
+	RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error)
+	Clear(ctx context.Context, userID uint) (*models.Cart, error)
 }
 
 // UpdateCartQuantityInput holds the new quantity sent by the customer.
@@ -173,4 +175,21 @@ func (s *cartService) UpdateQuantity(ctx context.Context, userID, cartItemID uin
 	}
 
 	return s.cartRepo.GetCartWithItems(ctx, userID)
+}
+
+// RemoveItem deletes one line from the customer's cart.
+func (s *cartService) RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error) {
+	if itemID == 0 {
+		return nil, fmt.Errorf("%w: cart item ID is required", ErrInvalidCartInput)
+	}
+	cart, err := s.cartRepo.RemoveItem(ctx, userID, itemID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrCartItemNotFound
+	}
+	return cart, err
+}
+
+// Clear removes every line and clears the cart restaurant.
+func (s *cartService) Clear(ctx context.Context, userID uint) (*models.Cart, error) {
+	return s.cartRepo.Clear(ctx, userID)
 }
