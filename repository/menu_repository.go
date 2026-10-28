@@ -1,164 +1,154 @@
-
 package repository
 
 import (
-	"errors"
+	"context"
 
 	"Fhub/models"
+
 	"gorm.io/gorm"
 )
 
-var ErrMenuItemNotFound = errors.New("menu item not found")
-var ErrMenuItemUnavailable = errors.New("this item is currently unavailable")
-var ErrMenuItemForbidden = errors.New("you do not manage this restaurant")
-
-type MenuSearchFilters struct {
-    Name         string
-    CategoryID   *uint
-    RestaurantID *uint
-    MinPrice     *int64
-    MaxPrice     *int64
-    Available    *bool
-}
-
+// MenuRepository defines database operations for menu items.
 type MenuRepository interface {
-	Get(id uint) (*models.MenuItem, error)
-	List(restaurantID uint) ([]models.MenuItem, error)
-	SetAvailability(id, managerID uint, isAdmin, available bool) (*models.MenuItem, error)
-	CheckAvailable(id uint) error
-	Search(filters MenuSearchFilters) ([]models.MenuItem, error)
+	CreateMenuItem(ctx context.Context, item *models.MenuItem) error
+	GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error)
+	UpdateMenuItem(ctx context.Context, item *models.MenuItem) error
+	DeleteMenuItem(ctx context.Context, itemID, restaurantID uint) error
+
+	ListByRestaurant(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error)
+	Search(ctx context.Context, filters MenuSearchFilter) ([]models.MenuItem, int64, error)
 }
 
+// MenuSearchFilter is the database query for menu search.
+// Prices are minor units.
+type MenuSearchFilter struct {
+	Name         string
+	CategoryID   *uint
+	RestaurantID *uint
+	MinPrice     *int64
+	MaxPrice     *int64
+	Available    *bool
+	Limit        int
+	Offset       int
+}
+
+// PostgresMenuRepo stores the connection of the database.
 type PostgresMenuRepo struct {
 	db *gorm.DB
 }
 
+// NewMenuRepository creates a menu repository.
 func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &PostgresMenuRepo{db: db}
 }
 
-func (r *PostgresMenuRepo) Get(id uint) (*models.MenuItem, error) {
-	var item models.MenuItem
+// CreateMenuItem saves a new menu item.
+func (r *PostgresMenuRepo) CreateMenuItem(ctx context.Context, item *models.MenuItem) error {
+	return r.db.WithContext(ctx).Create(item).Error
+}
 
-	if err := r.db.First(&item, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrMenuItemNotFound
-		}
+// GetMenuItemByID finds one existing menu item using its ID.
+func (r *PostgresMenuRepo) GetMenuItemByID(ctx context.Context, itemID uint) (*models.MenuItem, error) {
+	var item models.MenuItem
+	err := r.db.WithContext(ctx).First(&item, itemID).Error
+	if err != nil {
 		return nil, err
 	}
-
 	return &item, nil
 }
 
-func (r *PostgresMenuRepo) List(restaurantID uint) ([]models.MenuItem, error) {
-	var items []models.MenuItem
+// UpdateMenuItem saves only the fields allowed by the edit operation.
+func (r *PostgresMenuRepo) UpdateMenuItem(ctx context.Context, item *models.MenuItem) error {
+	result := r.db.WithContext(ctx).Model(item).Select(
+		"Name",
+		"Description",
+		"CategoryID",
+		"Price",
+		"ImageURL",
+		"Available",
+		"UpdatedAt",
+	).Updates(item)
 
-	err := r.db.Where("restaurant_id = ?", restaurantID).
-		Find(&items).Error
-
-	if err != nil {
-		return nil, err
+	if result.Error != nil {
+		return result.Error
 	}
-
-	return items, nil
-}
-
-func (r *PostgresMenuRepo) SetAvailability(
-	id, managerID uint,
-	isAdmin, available bool,
-) (*models.MenuItem, error) {
-
-	var item models.MenuItem
-
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Raw(
-			"SELECT * FROM menu_items WHERE id = ? AND deleted_at IS NULL FOR UPDATE",
-			id,
-		).Scan(&item).Error; err != nil {
-			return err
-		}
-
-		if item.ID == 0 {
-			return ErrMenuItemNotFound
-		}
-
-		if !isAdmin {
-			var count int64
-
-			if err := tx.Model(&models.Restaurant{}).
-				Where("id = ? AND manager_id = ?", item.RestaurantID, managerID).
-				Count(&count).Error; err != nil {
-				return err
-			}
-
-			if count == 0 {
-				return ErrMenuItemForbidden
-			}
-		}
-
-		if err := tx.Model(&item).
-			Update("available", available).Error; err != nil {
-			return err
-		}
-
-		item.Available = available
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
 	}
-
-	return &item, nil
-}
-
-func (r *PostgresMenuRepo) CheckAvailable(id uint) error {
-	item, err := r.Get(id)
-
-	if err != nil {
-		return err
-	}
-
-	if !item.Available {
-		return ErrMenuItemUnavailable
-	}
-
 	return nil
 }
 
+// DeleteMenuItem soft-deletes a menu item belonging to a specific restaurant.
+func (r *PostgresMenuRepo) DeleteMenuItem(ctx context.Context, itemID, restaurantID uint) error {
+	result := r.db.WithContext(ctx).
+		Where("id = ? AND restaurant_id = ?", itemID, restaurantID).
+		Delete(&models.MenuItem{})
 
-func (r *PostgresMenuRepo) Search(filters MenuSearchFilters) ([]models.MenuItem, error) {
-    var items []models.MenuItem
-
-    query := r.db.Model(&models.MenuItem{})
-
-    if filters.Name != "" {
-        query = query.Where("name ILIKE ?", "%"+filters.Name+"%")
-    }
-
-    if filters.CategoryID != nil {
-        query = query.Where("category_id = ?", *filters.CategoryID)
-    }
-
-    if filters.RestaurantID != nil {
-        query = query.Where("restaurant_id = ?", *filters.RestaurantID)
-    }
-
-    if filters.MinPrice != nil {
-        query = query.Where("price >= ?", *filters.MinPrice)
-    }
-
-    if filters.MaxPrice != nil {
-        query = query.Where("price <= ?", *filters.MaxPrice)
-    }
-
-    if filters.Available != nil {
-        query = query.Where("available = ?", *filters.Available)
-    }
-
-    err := query.Find(&items).Error
-
-    return items, err
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
+func (r *PostgresMenuRepo) ListByRestaurant(ctx context.Context, restaurantID uint, categoryID *uint) ([]models.MenuItem, error) {
+	var items []models.MenuItem
 
+	query := r.db.WithContext(ctx).
+		Where("restaurant_id = ?", restaurantID)
+
+	if categoryID != nil {
+		query = query.Where("category_id = ?", *categoryID)
+	}
+
+	err := query.Order("name ASC, id ASC").Find(&items).Error
+	return items, err
+}
+
+// Search returns one page of menu items from active restaurants.
+func (r *PostgresMenuRepo) Search(ctx context.Context, filters MenuSearchFilter) ([]models.MenuItem, int64, error) {
+	itemsQuery := r.menuSearchQuery(ctx, filters)
+	var total int64
+	if err := itemsQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var items []models.MenuItem
+	err := r.menuSearchQuery(ctx, filters).
+		Select("menu_items.*").
+		Order("menu_items.name ASC, menu_items.id ASC").
+		Limit(filters.Limit).
+		Offset(filters.Offset).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *PostgresMenuRepo) menuSearchQuery(ctx context.Context, filters MenuSearchFilter) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.MenuItem{}).
+		Joins("JOIN restaurants ON restaurants.id = menu_items.restaurant_id AND restaurants.deleted_at IS NULL").
+		Where("restaurants.status = ?", models.RestaurantStatusActive)
+	if filters.Name != "" {
+		query = query.Where("LOWER(menu_items.name) LIKE LOWER(?)", likeContains(filters.Name))
+	}
+	if filters.CategoryID != nil {
+		query = query.Where("menu_items.category_id = ?", *filters.CategoryID)
+	}
+	if filters.RestaurantID != nil {
+		query = query.Where("menu_items.restaurant_id = ?", *filters.RestaurantID)
+	}
+	if filters.MinPrice != nil {
+		query = query.Where("menu_items.price >= ?", *filters.MinPrice)
+	}
+	if filters.MaxPrice != nil {
+		query = query.Where("menu_items.price <= ?", *filters.MaxPrice)
+	}
+	if filters.Available != nil {
+		query = query.Where("menu_items.available = ?", *filters.Available)
+	}
+	return query
+}
