@@ -12,6 +12,7 @@ import (
 // r.db.Transaction(func(tx *gorm.DB) error { ... }) call.
 type OrderRepository interface {
 	IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error)
+	GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error)
 }
 
 type PostgresOrderRepo struct {
@@ -33,4 +34,20 @@ func (r *PostgresOrderRepo) IsRestaurantActive(ctx context.Context, restaurantID
 	}
 
 	return restaurant.Status == models.RestaurantStatusActive, nil
+}
+
+// Loads all items associated with the order so the customer can view their order details.
+func (r *PostgresOrderRepo) GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error) {
+	var order models.Order
+
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Where("id = ? AND customer_id = ?", orderID, customerID).
+		First(&order).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &order, nil
 }

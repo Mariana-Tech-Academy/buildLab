@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"Fhub/models"
 	"Fhub/repository"
 )
 
@@ -11,6 +12,7 @@ var ErrRestaurantNotActive = errors.New("restaurant is not active")
 
 type OrderService interface {
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
+	GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error)
 }
 
 type orderService struct {
@@ -32,4 +34,11 @@ func (s *orderService) CanAcceptOrder(ctx context.Context, restaurantID uint) er
 		return ErrRestaurantNotActive
 	}
 	return nil
+}
+
+// GetOrderByID retrieves an order using the order ID and customer ID.
+// Returns the order details if found, or an error if no matching order exists.
+func (s *orderService) GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error) {
+	return s.orderRepo.GetOrderByID(ctx, orderID, customerID)
+
 }
