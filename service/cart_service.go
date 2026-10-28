@@ -28,7 +28,26 @@ type AddedCartItem struct {
 	Quantity     int
 	Price        int64
 }
+// CartLine represents an item displayed in the customer's cart.
+type CartLine struct {
+    ID              uint   `json:"id"`
+    MenuItemID      uint   `json:"menu_item_id"`
+    Name            string `json:"name"`
+    UnitPrice       int64  `json:"unit_price"`
+    PriceAtAddition int64  `json:"price_at_addition"`
+    Quantity        int    `json:"quantity"`
+    LineTotal       int64  `json:"line_total"`
+    Available       bool   `json:"available"`
+    PriceChanged    bool   `json:"price_changed"`
+}
 
+// CartSummary represents the customer's cart and subtotal.
+type CartSummary struct {
+    ID           uint       `json:"id"`
+    RestaurantID *uint      `json:"restaurant_id"`
+    Items        []CartLine `json:"items"`
+    Subtotal     int64      `json:"subtotal"`
+}
 // CartService defines the shopping cart operations available to handlers.
 type CartService interface {
 	AddItemToCart(
@@ -38,6 +57,7 @@ type CartService interface {
 		quantity int,
 	) (*AddedCartItem, error)
 	UpdateQuantity(ctx context.Context, userID, cartItemID uint, input UpdateCartQuantityInput) (*models.Cart, error)
+	GetCart(ctx context.Context, userID uint) (*CartSummary, error)
 }
 
 // UpdateCartQuantityInput holds the new quantity sent by the customer.
@@ -103,6 +123,7 @@ func (s *cartService) AddItemToCart(
 		menuItem.ID,
 		quantity,
 		maxCartItemQuantity,
+		menuItem.Price,
 	)
 	if errors.Is(err, repository.ErrDifferentRestaurant) {
 		return nil, ErrCartRestaurantConflict
@@ -173,4 +194,58 @@ func (s *cartService) UpdateQuantity(ctx context.Context, userID, cartItemID uin
 	}
 
 	return s.cartRepo.GetCartWithItems(ctx, userID)
+}
+// GetCart retrieves the customer's cart and calculates its subtotal.
+func (s *cartService) GetCart(
+    ctx context.Context,
+    userID uint,
+) (*CartSummary, error) {
+
+    cart, err := s.cartRepo.GetCartWithItems(ctx, userID)
+
+    // A customer who has never added an item has an empty cart.
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        return &CartSummary{
+            Items: []CartLine{},
+        }, nil
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    result := &CartSummary{
+        ID:           cart.ID,
+        RestaurantID: cart.RestaurantID,
+        Items:        make([]CartLine, 0, len(cart.Items)),
+    }
+
+    for _, item := range cart.Items {
+        currentPrice := item.MenuItem.Price
+        available := item.MenuItem.ID != 0 && item.MenuItem.Available
+
+        // A zero snapshot indicates a legacy item without a known original price.
+        priceChanged := item.PriceAtAddition != 0 &&
+            item.PriceAtAddition != currentPrice
+
+        lineTotal := currentPrice * int64(item.Quantity)
+
+        result.Items = append(result.Items, CartLine{
+            ID:              item.ID,
+            MenuItemID:      item.MenuItemID,
+            Name:            item.MenuItem.Name,
+            UnitPrice:       currentPrice,
+            PriceAtAddition: item.PriceAtAddition,
+            Quantity:        item.Quantity,
+            LineTotal:       lineTotal,
+            Available:       available,
+            PriceChanged:    priceChanged,
+        })
+
+        if available {
+            result.Subtotal += lineTotal
+        }
+    }
+
+    return result, nil
 }
