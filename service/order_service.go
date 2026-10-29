@@ -38,6 +38,9 @@ var ErrInvalidOrderPage = errors.New("limit must be between 1 and 50")
 
 var ErrOrderNotFound = errors.New("order not found")
 
+// Error returned when an order has gone too far to be cancelled
+var ErrOrderCannotBeCancelled = errors.New("this order can no longer be cancelled")
+
 // OrderService defines the business operations related to orders.
 type OrderService interface {
 
@@ -53,6 +56,9 @@ type OrderService interface {
 	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
 	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
 	List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error)
+
+	// CancelOrder cancels an order if the user is allowed to and the order has not gone too far.
+	CancelOrder(ctx context.Context, userID uint, role models.Role, orderID uint) (*models.Order, error)
 }
 
 // CustomerOrdersPage is one page of the customer's own orders.
@@ -281,4 +287,68 @@ func (s *orderService) List(ctx context.Context, customerID uint, status string,
 		return nil, err
 	}
 	return &CustomerOrdersPage{Orders: orders, Page: page, Limit: limit, Total: total}, nil
+}
+
+// cancellableStatuses lists the statuses an order can still be cancelled from.
+// Orders can be cancelled while Pending or Confirmed, but not once the restaurant starts Preparing.
+var cancellableStatuses = []models.OrderStatus{
+	models.OrderStatusPending,
+	models.OrderStatusConfirmed,
+}
+
+// CanCancel checks whether an order in this status can still be cancelled.
+func CanCancel(status models.OrderStatus) bool {
+	for _, allowed := range cancellableStatuses {
+		if status == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// canUserCancel checks whether this user is allowed to cancel this order.
+// Customers can cancel their own orders, managers can cancel orders for their
+// own restaurant, and admins can cancel any order.
+func canUserCancel(order *models.Order, userID uint, role models.Role) bool {
+	switch role {
+	case models.RoleAdmin:
+		return true
+	case models.RoleCustomer:
+		return order.CustomerID == userID
+	case models.RoleManager:
+		return order.Restaurant.ID != 0 && order.Restaurant.ManagerID == userID
+	default:
+		return false
+	}
+}
+
+// CancelOrder cancels an order after checking who is cancelling it and its current status.
+func (s *orderService) CancelOrder(ctx context.Context, userID uint, role models.Role, orderID uint) (*models.Order, error) {
+	order, err := s.orderRepo.FindOrderForCancel(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, err
+	}
+
+	// Return not found, rather than forbidden, so callers cannot tell whether someone else's order exists.
+	if !canUserCancel(order, userID, role) {
+		return nil, ErrOrderNotFound
+	}
+
+	if !CanCancel(order.Status) {
+		return nil, ErrOrderCannotBeCancelled
+	}
+
+	if err := s.orderRepo.CancelOrder(ctx, order.ID, cancellableStatuses); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// The order moved on (for example to preparing) just before we cancelled it.
+			return nil, ErrOrderCannotBeCancelled
+		}
+		return nil, err
+	}
+
+	order.Status = models.OrderStatusCancelled
+	return order, nil
 }

@@ -40,6 +40,8 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	customer.HandleFunc("/orders/{id}", orderHandler.GetOrderByID).Methods(http.MethodGet)
 
 	authed := protected(router, tokens, blacklist)
+	// ORD-06: customers, managers and admins can cancel an order.
+	authed.HandleFunc("/orders/{id}/cancel", orderHandler.CancelOrder).Methods(http.MethodPatch)
 
 	// manager/admin routes: PATCH /orders/{id}/status
 	staff := protected(router, tokens, blacklist)
