@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"Fhub/models"
 	"Fhub/repository"
@@ -52,6 +54,9 @@ type OrderService interface {
 
 	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
 	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
+
+	//GenerateOrderNumber creates a unique order number for the day ORD-20261029-001
+	GenerateOrderNumber(ctx context.Context) (string, error)
 }
 
 // RestaurantOrdersPage is one page of orders for a restaurant.
@@ -254,4 +259,20 @@ func (s *orderService) ValidateDeliveryInfo(input *DeliveryInfoInput) map[string
 	}
 
 	return errs
+}
+
+// FormatOrderNumber builds an order no. in the format ORD-YYYYMMDD-NNN
+func FormatOrderNumber(date time.Time, sequence int) string {
+	return fmt.Sprintf("ORD-%s-%03d", date.Format("20060102"), sequence)
+}
+
+func (s *orderService) GenerateOrderNumber(ctx context.Context) (string, error) {
+	now := time.Now()
+
+	sequence, err := s.orderRepo.NextOrderSequence(ctx, now.Format("20060102"))
+	if err != nil {
+		return "", err
+	}
+
+	return FormatOrderNumber(now, sequence), nil
 }

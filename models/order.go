@@ -54,3 +54,10 @@ type CheckoutSummary struct {
 	DeliveryFee    int64          `json:"delivery_fee"`
 	Total          int64          `json:"total"`
 }
+
+// OrderNumberCounter stores the last order no. used on each day
+// Date is the day in YYMMDD format e.g. 20261026
+type OrderNumberCounter struct {
+	Date       string `gorm:"primaryKey;size:8"`
+	LastNumber int    `gorm:"not null"`
+}

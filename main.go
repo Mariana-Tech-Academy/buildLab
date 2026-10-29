@@ -48,6 +48,7 @@ func main() {
 		&models.CartItem{},
 		&models.Order{},
 		&models.OrderItem{},
+		&models.OrderNumberCounter{},
 	)
 	if err != nil {
 		log.Fatal("failed to automigrate: ", err)

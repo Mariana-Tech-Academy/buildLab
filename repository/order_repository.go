@@ -28,6 +28,9 @@ type OrderRepository interface {
 	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
 
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
+
+	//NextOrderSequence gives back the next order num for the given day
+	NextOrderSequence(ctx context.Context, date string) (int, error)
 }
 
 type PostgresOrderRepo struct {
@@ -149,4 +152,20 @@ func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID u
 	summary.Total = summary.Subtotal + summary.DeliveryFee
 
 	return summary, nil
+}
+
+func (r *PostgresOrderRepo) NextOrderSequence(ctx context.Context, date string) (int, error) {
+	var next int
+
+	err := r.db.WithContext(ctx).Raw(`
+	NSERT INTO order_number_counters (date, last_number)
+		VALUES (?, 1)
+		ON CONFLICT (date)
+		DO UPDATE SET last_number = order_number_counters.last_number + 1
+		RETURNING last_number`, date).Scan(&next).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return next, nil
 }
