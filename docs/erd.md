@@ -97,3 +97,5 @@ erDiagram
 
 - **Cart conflict rule (PRD 4.4):** reject adding an item from a different restaurant, or ask the customer to clear the cart.
 - **Cancellation rule (PRD 4.8):** which statuses allow cancellation and who may cancel.
+
+- **Order numbers (ORD-01):** every order gets a number in the format ORD-YYYYMMDD-NNN, for example ORD-20261029-001. The number goes back to 001 each day. Checkout works out the next number by finding the highest number used today and adding 1. The order_number column is unique, so if two orders try to use the same number at the same time, one is rejected and checkout tries again with the next number (up to 5 times).
