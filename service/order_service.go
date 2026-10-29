@@ -55,9 +55,18 @@ type OrderService interface {
 
 	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
 	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
+	List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error)
 
-	//cancelOrder cancels an order if the user is allowed to and the order has not gone too far
+	// CancelOrder cancels an order if the user is allowed to and the order has not gone too far.
 	CancelOrder(ctx context.Context, userID uint, role models.Role, orderID uint) (*models.Order, error)
+}
+
+// CustomerOrdersPage is one page of the customer's own orders.
+type CustomerOrdersPage struct {
+	Orders []models.Order
+	Page   int
+	Limit  int
+	Total  int64
 }
 
 // RestaurantOrdersPage is one page of orders for a restaurant.
@@ -262,9 +271,26 @@ func (s *orderService) ValidateDeliveryInfo(input *DeliveryInfoInput) map[string
 	return errs
 }
 
+func (s *orderService) List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error) {
+	status = strings.TrimSpace(status)
+	if !isValidOrderStatus(status) {
+		return nil, ErrInvalidOrderStatus
+	}
+
+	page, limit, offset, err := orderPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	orders, total, err := s.orderRepo.ListForCustomer(ctx, customerID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &CustomerOrdersPage{Orders: orders, Page: page, Limit: limit, Total: total}, nil
+}
+
 // cancellableStatuses lists the statuses an order can still be cancelled from.
-// Team decision: orders can be cancelled while Pending or Confirmed,
-// but not once the restaurant starts Preparing or after that.
+// Orders can be cancelled while Pending or Confirmed, but not once the restaurant starts Preparing.
 var cancellableStatuses = []models.OrderStatus{
 	models.OrderStatusPending,
 	models.OrderStatusConfirmed,
@@ -290,7 +316,7 @@ func canUserCancel(order *models.Order, userID uint, role models.Role) bool {
 	case models.RoleCustomer:
 		return order.CustomerID == userID
 	case models.RoleManager:
-		return order.Restaurant.ManagerID == userID
+		return order.Restaurant.ID != 0 && order.Restaurant.ManagerID == userID
 	default:
 		return false
 	}
@@ -306,8 +332,7 @@ func (s *orderService) CancelOrder(ctx context.Context, userID uint, role models
 		return nil, err
 	}
 
-	// Return not found, rather than forbidden, so users can't tell whether
-	// someone else's order exists.
+	// Return not found, rather than forbidden, so callers cannot tell whether someone else's order exists.
 	if !canUserCancel(order, userID, role) {
 		return nil, ErrOrderNotFound
 	}
@@ -318,7 +343,7 @@ func (s *orderService) CancelOrder(ctx context.Context, userID uint, role models
 
 	if err := s.orderRepo.CancelOrder(ctx, order.ID, cancellableStatuses); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// The order moved on (e.g. to preparing) just before we cancelled it.
+			// The order moved on (for example to preparing) just before we cancelled it.
 			return nil, ErrOrderCannotBeCancelled
 		}
 		return nil, err

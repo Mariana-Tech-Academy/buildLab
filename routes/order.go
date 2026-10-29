@@ -23,6 +23,9 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	orderService := service.NewOrderService(repo, restaurantRepo)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
+	checkoutService := service.NewCheckoutService(repository.NewCheckoutRepository(db))
+	checkoutHandler := handlers.NewCheckoutHandler(checkoutService, orderService)
+
 	// customer routes: POST /orders (checkout)
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
@@ -31,14 +34,14 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	// CHK-02: Allow authenticated customers to validate delivery information.
 	customer.HandleFunc("/orders/delivery/validate", orderHandler.ValidateDeliveryInfo).Methods(http.MethodPost)
 
-	// authenticated routes: GET /orders, GET /orders/{id}
-	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
-	authed := protected(router, tokens, blacklist)
-	// ORD-06:customers, managers and admins can cancel an order
-	authed.HandleFunc("/orders/{id}/cancel", orderHandler.CancelOrder).Methods(http.MethodPatch)
+	// Connect checkout requests to the checkout handler.
+	customer.HandleFunc("/orders", checkoutHandler.PlaceOrder).Methods(http.MethodPost)
+	customer.HandleFunc("/orders", orderHandler.ViewOrder).Methods(http.MethodGet)
+	customer.HandleFunc("/orders/{id}", orderHandler.GetOrderByID).Methods(http.MethodGet)
 
-	// Allows logged-in customers to view their own orders.
-	customer.HandleFunc("/orders/{id}", orderHandler.GetOrderByID).Methods("GET")
+	authed := protected(router, tokens, blacklist)
+	// ORD-06: customers, managers and admins can cancel an order.
+	authed.HandleFunc("/orders/{id}/cancel", orderHandler.CancelOrder).Methods(http.MethodPatch)
 
 	// manager/admin routes: PATCH /orders/{id}/status
 	staff := protected(router, tokens, blacklist)

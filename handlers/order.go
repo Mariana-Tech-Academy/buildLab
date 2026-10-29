@@ -309,6 +309,50 @@ func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
 	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
 }
 
+func (h *OrderHandler) ViewOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.OrderService.List(r.Context(), claims.UserID, r.URL.Query().Get("status"), page, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus), errors.Is(err, service.ErrInvalidOrderPage):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			log.Printf("list orders: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	items := make([]customerOrderResponse, 0, len(result.Orders))
+	for i := range result.Orders {
+		items = append(items, newCustomerOrderResponse(&result.Orders[i]))
+	}
+	utils.Success(w, http.StatusOK, "orders retrieved successfully", customerOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type customerOrdersResponse struct {
+	Items []customerOrderResponse `json:"items"`
+	Page  int                     `json:"page"`
+	Limit int                     `json:"limit"`
+	Total int64                   `json:"total"`
+}
+
 // cancelOrderResponse is what we send back after an order is cancelled.
 type cancelOrderResponse struct {
 	ID          uint               `json:"id"`
