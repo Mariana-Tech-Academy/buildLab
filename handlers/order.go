@@ -2,14 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
-	"net/http"
-
-	"Fhub/service"
-	"Fhub/utils"
 	"errors"
+	"log"
+	"net/http"
 	"strconv"
+	"strings"
+	"time"
+
 	"Fhub/auth"
 	"Fhub/models"
+	"Fhub/service"
+	"Fhub/utils"
 
 	"github.com/gorilla/mux"
 )
@@ -19,8 +22,91 @@ type OrderHandler struct {
 	OrderService service.OrderService
 }
 
-// NewOrderHandler creates a new order handler
-// and connects it to the order service.
+// orderCustomerResponse contains the customer's basic details.
+type orderCustomerResponse struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+}
+
+// orderItemResponse contains the details of each ordered item.
+type orderItemResponse struct {
+	Name      string `json:"name"`
+	UnitPrice int64  `json:"unit_price"`
+	Quantity  int    `json:"quantity"`
+	LineTotal int64  `json:"line_total"`
+}
+
+// restaurantOrderResponse contains the information shown to the manager.
+type restaurantOrderResponse struct {
+	ID                   uint                  `json:"id"`
+	OrderNumber          string                `json:"order_number"`
+	Status               models.OrderStatus    `json:"status"`
+	CreatedAt            time.Time             `json:"created_at"`
+	Customer             orderCustomerResponse `json:"customer"`
+	Items                []orderItemResponse   `json:"items"`
+	Subtotal             int64                 `json:"subtotal"`
+	DeliveryFee          int64                 `json:"delivery_fee"`
+	Total                int64                 `json:"total"`
+	DeliveryName         string                `json:"delivery_name"`
+	DeliveryPhone        string                `json:"delivery_phone"`
+	DeliveryAddress      string                `json:"delivery_address"`
+	DeliveryCity         string                `json:"delivery_city"`
+	DeliveryState        string                `json:"delivery_state"`
+	DeliveryInstructions string                `json:"delivery_instructions"`
+}
+
+// newRestaurantOrderResponse converts an order into a safe JSON response.
+func newRestaurantOrderResponse(order models.Order) restaurantOrderResponse {
+
+	// Create an empty slice to store the order items.
+	items := make([]orderItemResponse, 0, len(order.Items))
+
+	// Loop through each order item; _ ignores the index, and item holds the current item.
+	for _, item := range order.Items {
+
+		// Add the item's name, price, quantity and total to the response.
+		items = append(items, orderItemResponse{
+			Name:      item.Name,
+			UnitPrice: item.UnitPrice,
+			Quantity:  item.Quantity,
+			LineTotal: item.LineTotal,
+		})
+	}
+
+	// Return only the information the restaurant manager needs.
+	return restaurantOrderResponse{
+
+		// Basic order information.
+		ID:          order.ID,
+		OrderNumber: order.OrderNumber,
+		Status:      order.Status,
+		CreatedAt:   order.CreatedAt,
+
+		// Customer details without exposing sensitive account information.
+		Customer: orderCustomerResponse{
+			FirstName: order.Customer.FirstName,
+			LastName:  order.Customer.LastName,
+			Phone:     order.Customer.Phone,
+		},
+
+		// Ordered items and payment totals.
+		Items:       items,
+		Subtotal:    order.Subtotal,
+		DeliveryFee: order.DeliveryFee,
+		Total:       order.Total,
+
+		// Delivery information provided during checkout.
+		DeliveryName:         order.DeliveryName,
+		DeliveryPhone:        order.DeliveryPhone,
+		DeliveryAddress:      order.DeliveryAddress,
+		DeliveryCity:         order.DeliveryCity,
+		DeliveryState:        order.DeliveryState,
+		DeliveryInstructions: order.DeliveryInstructions,
+	}
+}
+
+// NewOrderHandler creates a new order handler and connects it to the order service.
 func NewOrderHandler(service service.OrderService) *OrderHandler {
 	return &OrderHandler{
 		OrderService: service,
@@ -51,91 +137,321 @@ func (h *OrderHandler) ValidateDeliveryInfo(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Return HTTP 200 OK with a success message and the validated delivery details.
 	utils.Success(w, http.StatusOK, "delivery information is valid", input)
 }
 
-// updateOrderStatusRequest represents the new order status.
-type updateOrderStatusRequest struct {
-	Status models.OrderStatus `json:"status"`
-}
+// GetRestaurantOrders retrieves orders belonging to the manager's restaurant.
+func (h *OrderHandler) GetRestaurantOrders(w http.ResponseWriter, r *http.Request) {
 
-// UpdateOrderStatus allows managers to move orders through their stages.
-func (h *OrderHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
-
-	// Get the authenticated user's details.
+	// Get the authenticated manager's details from the JWT.
 	claims, err := auth.ClaimsFromContext(r.Context())
 	if err != nil {
-		utils.Error(w, http.StatusUnauthorized, "unauthenticated")
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
-	// Get restaurant ID from URL.
-	restaurantID, err := strconv.ParseUint(
-		mux.Vars(r)["restaurantId"], 10, 64,
-	)
+	// Get the restaurant ID from the URL.
+	// mux.Vars gets the restaurant ID from the URL's {id} parameter.
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil || restaurantID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
 		return
 	}
 
-	// Get order ID from URL.
-	orderID, err := strconv.ParseUint(
-		mux.Vars(r)["orderId"], 10, 64,
+	status := r.URL.Query().Get("status")
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.OrderService.GetRestaurantOrders(r.Context(), claims.UserID, claims.Role, uint(restaurantID), status, page, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus), errors.Is(err, service.ErrInvalidOrderPage):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrOrderAccessDenied):
+			utils.Error(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		default:
+			log.Printf("get restaurant orders: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	items := make([]restaurantOrderResponse, 0, len(result.Orders))
+	for _, order := range result.Orders {
+		items = append(items, newRestaurantOrderResponse(order))
+	}
+
+	utils.Success(w, http.StatusOK, "restaurant orders retrieved successfully", restaurantOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type restaurantOrdersResponse struct {
+	Items []restaurantOrderResponse `json:"items"`
+	Page  int                       `json:"page"`
+	Limit int                       `json:"limit"`
+	Total int64                     `json:"total"`
+}
+
+func (h *OrderHandler) GetCheckoutSummary(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	summary, err := h.OrderService.GetCheckoutSummary(
+		r.Context(),
+		claims.UserID,
 	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmptyCart):
+			utils.Error(w, http.StatusUnprocessableEntity, "cannot checkout with an empty cart")
+		case errors.Is(err, service.ErrUnavailableItem):
+			utils.Error(w, http.StatusConflict, "cart contains an unavailable item")
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		default:
+			log.Printf("checkout summary: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "checkout summary", summary)
+}
+
+// customerOrderResponse is one order as seen by the customer who placed it.
+type customerOrderResponse struct {
+	ID                   uint                `json:"id"`
+	OrderNumber          string              `json:"order_number"`
+	Status               models.OrderStatus  `json:"status"`
+	CreatedAt            time.Time           `json:"created_at"`
+	RestaurantID         uint                `json:"restaurant_id"`
+	RestaurantName       string              `json:"restaurant_name"`
+	Items                []orderItemResponse `json:"items"`
+	Subtotal             int64               `json:"subtotal"`
+	DeliveryFee          int64               `json:"delivery_fee"`
+	Total                int64               `json:"total"`
+	DeliveryName         string              `json:"delivery_name"`
+	DeliveryPhone        string              `json:"delivery_phone"`
+	DeliveryAddress      string              `json:"delivery_address"`
+	DeliveryCity         string              `json:"delivery_city"`
+	DeliveryState        string              `json:"delivery_state"`
+	DeliveryInstructions string              `json:"delivery_instructions"`
+}
+
+func newCustomerOrderResponse(order *models.Order) customerOrderResponse {
+	items := make([]orderItemResponse, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, orderItemResponse{
+			Name:      item.Name,
+			UnitPrice: item.UnitPrice,
+			Quantity:  item.Quantity,
+			LineTotal: item.LineTotal,
+		})
+	}
+	return customerOrderResponse{
+		ID:                   order.ID,
+		OrderNumber:          order.OrderNumber,
+		Status:               order.Status,
+		CreatedAt:            order.CreatedAt,
+		RestaurantID:         order.RestaurantID,
+		RestaurantName:       order.Restaurant.Name,
+		Items:                items,
+		Subtotal:             order.Subtotal,
+		DeliveryFee:          order.DeliveryFee,
+		Total:                order.Total,
+		DeliveryName:         order.DeliveryName,
+		DeliveryPhone:        order.DeliveryPhone,
+		DeliveryAddress:      order.DeliveryAddress,
+		DeliveryCity:         order.DeliveryCity,
+		DeliveryState:        order.DeliveryState,
+		DeliveryInstructions: order.DeliveryInstructions,
+	}
+}
+
+// GetOrderByID retrieves an order using its ID.
+func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
+	orderID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || orderID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid order ID")
+		return
+	}
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	order, err := h.OrderService.GetOrderByID(
+		r.Context(),
+		uint(orderID),
+		claims.UserID,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			utils.Error(w, http.StatusNotFound, "order not found")
+			return
+		}
+		log.Printf("get order: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
+}
+
+func (h *OrderHandler) ViewOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.OrderService.List(r.Context(), claims.UserID, r.URL.Query().Get("status"), page, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus), errors.Is(err, service.ErrInvalidOrderPage):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			log.Printf("list orders: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	items := make([]customerOrderResponse, 0, len(result.Orders))
+	for i := range result.Orders {
+		items = append(items, newCustomerOrderResponse(&result.Orders[i]))
+	}
+	utils.Success(w, http.StatusOK, "orders retrieved successfully", customerOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type customerOrdersResponse struct {
+	Items []customerOrderResponse `json:"items"`
+	Page  int                     `json:"page"`
+	Limit int                     `json:"limit"`
+	Total int64                   `json:"total"`
+}
+
+// cancelOrderResponse is what we send back after an order is cancelled.
+type cancelOrderResponse struct {
+	ID          uint               `json:"id"`
+	OrderNumber string             `json:"order_number"`
+	Status      models.OrderStatus `json:"status"`
+}
+
+// CancelOrder handles PATCH /api/orders/{id}/cancel (ORD-06).
+// Customers, managers and admins can cancel, and the service checks they are allowed to.
+func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	order, err := h.OrderService.CancelOrder(r.Context(), claims.UserID, claims.Role, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrOrderCannotBeCancelled):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("cancel order: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order cancelled", cancelOrderResponse{
+		ID:          order.ID,
+		OrderNumber: order.OrderNumber,
+		Status:      order.Status,
+	})
+}
+
+type orderStatusResponse struct {
+	ID     uint               `json:"id"`
+	Status models.OrderStatus `json:"status"`
+}
+
+// UpdateOrderStatus handles PATCH /api/restaurants/{id}/orders/{orderId}/status.
+func (h *OrderHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+	orderID, err := strconv.ParseUint(mux.Vars(r)["orderId"], 10, 64)
 	if err != nil || orderID == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid order ID")
 		return
 	}
 
-	// Read the new status from the request body.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-
-	var req updateOrderStatusRequest
+	var req struct {
+		Status models.OrderStatus `json:"status"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Status = models.OrderStatus(strings.TrimSpace(string(req.Status)))
 
-	// Call the service to validate and update the order.
-	err = h.OrderService.UpdateOrderStatus(
-		r.Context(),
-		uint(orderID),
-		uint(restaurantID),
-		claims.UserID,
-		claims.Role,
-		req.Status,
-	)
-
+	err = h.OrderService.UpdateOrderStatus(r.Context(), uint(orderID), uint(restaurantID), claims.UserID, claims.Role, req.Status)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrOrderNotFound),
-			errors.Is(err, service.ErrRestaurantNotFound):
-			utils.Error(w, http.StatusNotFound, err.Error())
-
-		case errors.Is(err, service.ErrOrderForbidden),
-			errors.Is(err, service.ErrRestaurantForbidden):
-			utils.Error(w, http.StatusForbidden, err.Error())
-
 		case errors.Is(err, service.ErrInvalidOrderStatus):
 			utils.Error(w, http.StatusBadRequest, err.Error())
-
-		case errors.Is(err, service.ErrInvalidStatusTransition),
-			errors.Is(err, service.ErrOrderStatusFinal):
+		case errors.Is(err, service.ErrOrderStatusForbidden):
+			utils.Error(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrInvalidStatusTransition), errors.Is(err, service.ErrOrderStatusFinal):
 			utils.Error(w, http.StatusConflict, err.Error())
-
 		default:
-			utils.Error(w, http.StatusInternalServerError, "could not update order status")
+			log.Printf("update order status: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
 		}
 		return
 	}
 
-	utils.Success(
-		w,
-		http.StatusOK,
-		"order status updated successfully",
-		map[string]interface{}{
-			"order_id": orderID,
-			"status":   req.Status,
-		},
-	)
+	utils.Success(w, http.StatusOK, "order status updated successfully", orderStatusResponse{
+		ID:     uint(orderID),
+		Status: req.Status,
+	})
 }

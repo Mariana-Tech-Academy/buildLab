@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrDifferentRestaurant = errors.New("cannot add items from different restaurants")
+	ErrDifferentRestaurant = errors.New("cart contains items from another restaurant; clear the cart before adding this item")
 	ErrQuantityLimit       = errors.New("quantity exceeds the maximum")
 )
 
@@ -37,13 +37,19 @@ type CartRepository interface {
 	UpdateCartItemQuantity(ctx context.Context, itemID uint, quantity int) error
 
 	// AddItemForUser stores the cart restaurant and inserts or increments the line in one transaction.
-	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int) (cartID uint, newQuantity int, err error)
+	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int, price int64) (cartID uint, newQuantity int, err error)
 
 	// GetCartWithItems finds a customer's cart, including its items and their menu details.
 	GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error)
 
 	// SetItemQuantity replaces a cart item's quantity when the item belongs to the given cart.
 	SetItemQuantity(ctx context.Context, cartID, cartItemID uint, quantity int) error
+
+	// RemoveItem deletes one line from the customer's cart.
+	RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error)
+
+	// Clear removes every line and clears the cart restaurant.
+	Clear(ctx context.Context, userID uint) (*models.Cart, error)
 }
 
 // PostgresCartRepo holds the database connection used by the repository.
@@ -165,6 +171,7 @@ func (r *PostgresCartRepo) AddItemForUser(
 	menuItemID uint,
 	quantity int,
 	maxQuantity int,
+	price int64,
 ) (uint, int, error) {
 	if quantity < 1 || maxQuantity < 1 || quantity > maxQuantity {
 		return 0, 0, ErrQuantityLimit
@@ -177,7 +184,9 @@ func (r *PostgresCartRepo) AddItemForUser(
 		if err != nil {
 			return err
 		}
-		quantityNow, err := upsertCartItem(tx, cart.ID, menuItemID, quantity, maxQuantity)
+		quantityNow, err := upsertCartItem(
+			tx, cart.ID, menuItemID, quantity, maxQuantity, price,
+		)
 		if err != nil {
 			return err
 		}
@@ -233,7 +242,7 @@ func lockOrCreateCart(tx *gorm.DB, userID, restaurantID uint) (*models.Cart, err
 	return &cart, nil
 }
 
-func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity int) (int, error) {
+func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity int, price int64) (int, error) {
 	var item models.CartItem
 	err := tx.Where("cart_id = ? AND menu_item_id = ?", cartID, menuItemID).First(&item).Error
 	if err == nil {
@@ -246,7 +255,7 @@ func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity 
 	if err := tx.SavePoint("create_item").Error; err != nil {
 		return 0, err
 	}
-	item = models.CartItem{CartID: cartID, MenuItemID: menuItemID, Quantity: quantity}
+	item = models.CartItem{CartID: cartID, MenuItemID: menuItemID, Quantity: quantity, PriceAtAddition: price}
 	if err := tx.Create(&item).Error; err != nil {
 		if !isUniqueViolation(err) {
 			return 0, err
@@ -305,6 +314,92 @@ func (r *PostgresCartRepo) SetItemQuantity(ctx context.Context, cartID, cartItem
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// RemoveItem deletes one line. The restaurant is cleared when that was the last line.
+func (r *PostgresCartRepo) RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error) {
+	var result *models.Cart
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cart models.Cart
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", userID).
+			First(&cart).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return gorm.ErrRecordNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		deleted := tx.Unscoped().Where("id = ? AND cart_id = ?", itemID, cart.ID).Delete(&models.CartItem{})
+		if deleted.Error != nil {
+			return deleted.Error
+		}
+		if deleted.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		var count int64
+		if err := tx.Model(&models.CartItem{}).Where("cart_id = ?", cart.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			if err := clearCartRestaurant(tx, cart.ID); err != nil {
+				return err
+			}
+		}
+		result, err = loadCartWithItems(tx, cart.ID)
+		return err
+	})
+	return result, err
+}
+
+// Clear removes every line and clears the cart restaurant.
+func (r *PostgresCartRepo) Clear(ctx context.Context, userID uint) (*models.Cart, error) {
+	var result *models.Cart
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cart models.Cart
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", userID).
+			First(&cart).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			result = &models.Cart{UserID: userID, Items: []models.CartItem{}}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("cart_id = ?", cart.ID).Delete(&models.CartItem{}).Error; err != nil {
+			return err
+		}
+		if err := clearCartRestaurant(tx, cart.ID); err != nil {
+			return err
+		}
+		result, err = loadCartWithItems(tx, cart.ID)
+		return err
+	})
+	return result, err
+}
+
+func clearCartRestaurant(tx *gorm.DB, cartID uint) error {
+	return tx.Exec(
+		"UPDATE carts SET restaurant_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+		cartID,
+	).Error
+}
+
+func loadCartWithItems(tx *gorm.DB, cartID uint) (*models.Cart, error) {
+	var cart models.Cart
+	err := tx.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("id ASC")
+	}).Preload("Items.MenuItem").First(&cart, cartID).Error
+	if err != nil {
+		return nil, err
+	}
+	if cart.Items == nil {
+		cart.Items = []models.CartItem{}
+	}
+	return &cart, nil
 }
 
 func isUniqueViolation(err error) bool {
