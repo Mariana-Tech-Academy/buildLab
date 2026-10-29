@@ -308,3 +308,45 @@ func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
 }
+
+// cancelOrderResponse is what we send back after an order is cancelled.
+type cancelOrderResponse struct {
+	ID          uint               `json:"id"`
+	OrderNumber string             `json:"order_number"`
+	Status      models.OrderStatus `json:"status"`
+}
+
+// CancelOrder handles PATCH /api/orders/{id}/cancel (ORD-06).
+// Customers, managers and admins can cancel, and the service checks they are allowed to.
+func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	order, err := h.OrderService.CancelOrder(r.Context(), claims.UserID, claims.Role, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrOrderCannotBeCancelled):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("cancel order: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order cancelled", cancelOrderResponse{
+		ID:          order.ID,
+		OrderNumber: order.OrderNumber,
+		Status:      order.Status,
+	})
+}

@@ -96,4 +96,4 @@ erDiagram
 ## Decisions the team still needs to document
 
 - **Cart conflict rule (PRD 4.4):** reject adding an item from a different restaurant, or ask the customer to clear the cart.
-- **Cancellation rule (PRD 4.8):** which statuses allow cancellation and who may cancel.
+- **Cancellation rule (PRD 4.8, ORD-06):** an order can be cancelled while it is Pending or Confirmed. Once it is Preparing or later, it can no longer be cancelled (409). Delivered and Cancelled are final states. Customers can cancel their own orders, managers can cancel orders for their own restaurant, and admins can cancel any order. Cancelling uses PATCH /api/orders/{id}/cancel.
