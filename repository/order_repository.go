@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"Fhub/models"
 
@@ -29,7 +28,7 @@ type OrderRepository interface {
 	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
 
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
-	ListForCustomer(ctx context.Context, customerID uint, status string, page, pageSize int) ([]models.Order, int64, error)
+	ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error)
 }
 
 type PostgresOrderRepo struct {
@@ -127,7 +126,7 @@ func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID u
 		Items:          make([]models.CheckoutItem, 0, len(cart.Items)),
 		DeliveryFee:    DeliveryFee,
 	}
-	for _, item := range cart.Items { //iterate ov/eac/item
+	for _, item := range cart.Items {
 		if item.Quantity <= 0 ||
 			item.MenuItem.ID == 0 ||
 			!item.MenuItem.Available ||
@@ -145,46 +144,38 @@ func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID u
 			LineTotal:  lineTotal,
 		})
 
-		summary.Subtotal += lineTotal //acc
+		summary.Subtotal += lineTotal
 	}
 
-	summary.Total = summary.Subtotal + summary.DeliveryFee //comp
+	summary.Total = summary.Subtotal + summary.DeliveryFee
 
 	return summary, nil
 }
 
-func (r *PostgresOrderRepo) ListForCustomer(ctx context.Context, customerID uint, status string, page, pageSize int) ([]models.Order, int64, error) {
-	//return r.list(r.db.Where("customer_id = ?", customerID), status, page, pageSize)
-	scope := r.db.Where("customer_id = ?", customerID)
-	return r.list(ctx, scope, status, page, pageSize)
-
-}
-
-// list applies an optional status filter, counts the matches and returns one
-// paginated page ordered newest first.
-func (r *PostgresOrderRepo) list(ctx context.Context, scope *gorm.DB, status string, page, pageSize int) ([]models.Order, int64, error) {
-	// attach request context so DB work is cancelled together with the request
-	q := scope.WithContext(ctx).Model(&models.Order{})
-	if s := strings.TrimSpace(status); s != "" {
-		q = q.Where("status = ?", s)
-	}
-
+func (r *PostgresOrderRepo) ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error) {
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := r.customerOrdersQuery(ctx, customerID, status).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var orders []models.Order
-	err := q.
+	err := r.customerOrdersQuery(ctx, customerID, status).
 		Preload("Items").
 		Preload("Restaurant").
-		Preload("Customer").
-		Order("created_at DESC").
-		Offset((page - 1) * pageSize).
-		Limit(pageSize).
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&orders).Error
 	if err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
+}
+
+func (r *PostgresOrderRepo) customerOrdersQuery(ctx context.Context, customerID uint, status string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.Order{}).Where("customer_id = ?", customerID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
 }

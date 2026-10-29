@@ -166,6 +166,28 @@ func (h *CartHandler) UpdateQuantity(w http.ResponseWriter, r *http.Request) {
 	utils.Success(w, http.StatusOK, "cart item quantity updated", newUpdatedCartResponse(cart))
 }
 
+// GetCart handles GET /api/cart.
+// It retrieves the authenticated customer's cart and subtotal.
+func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
+
+	// Get the authenticated customer's details from the request.
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Retrieve the customer's cart using the service.
+	cart, err := h.CartService.GetCart(r.Context(), claims.UserID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
+
+	// Return the cart details and subtotal.
+	utils.Success(w, http.StatusOK, "cart retrieved successfully", cart)
+}
+
 // RemoveItem handles DELETE /api/cart/items/{id}.
 func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
