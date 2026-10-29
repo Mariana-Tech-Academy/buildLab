@@ -21,7 +21,7 @@ type AdminService interface {
 	GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error)
 }
 
-// AdminOrderspage is one page of orders for the admin
+// AdminOrdersPage is one page of orders for the admin.
 type AdminOrdersPage struct {
 	Orders []models.Order
 	Page   int
@@ -62,6 +62,8 @@ func (s *adminService) SetUserRole(ctx context.Context, targetID uint, role mode
 
 // ListAllOrders checks the status filter and page, then gets one page of orders.
 func (s *adminService) ListAllOrders(ctx context.Context, status, search string, page, limit int) (*AdminOrdersPage, error) {
+	status = strings.TrimSpace(status)
+	search = strings.TrimSpace(search)
 	if !isValidOrderStatus(status) {
 		return nil, ErrInvalidOrderStatus
 	}
@@ -70,8 +72,6 @@ func (s *adminService) ListAllOrders(ctx context.Context, status, search string,
 	if err != nil {
 		return nil, err
 	}
-
-	search = strings.TrimSpace(search)
 
 	orders, total, err := s.adminRepo.ListAllOrders(ctx, status, search, limit, offset)
 	if err != nil {

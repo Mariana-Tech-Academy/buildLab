@@ -28,6 +28,13 @@ type OrderRepository interface {
 	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
 
 	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
+	ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error)
+
+	// FindOrderForCancel gets an order and its restaurant, so we can check who is allowed to cancel it.
+	FindOrderForCancel(ctx context.Context, orderID uint) (*models.Order, error)
+
+	// CancelOrder sets an order's status to cancelled, but only if it is still in one of the allowed statuses.
+	CancelOrder(ctx context.Context, orderID uint, allowed []models.OrderStatus) error
 }
 
 type PostgresOrderRepo struct {
@@ -149,4 +156,62 @@ func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID u
 	summary.Total = summary.Subtotal + summary.DeliveryFee
 
 	return summary, nil
+}
+
+func (r *PostgresOrderRepo) ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error) {
+	var total int64
+	if err := r.customerOrdersQuery(ctx, customerID, status).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var orders []models.Order
+	err := r.customerOrdersQuery(ctx, customerID, status).
+		Preload("Items").
+		Preload("Restaurant").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&orders).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+func (r *PostgresOrderRepo) customerOrdersQuery(ctx context.Context, customerID uint, status string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.Order{}).Where("customer_id = ?", customerID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
+}
+
+// FindOrderForCancel gets an order by its ID, including its restaurant.
+// The restaurant is needed to check whether a manager owns it.
+func (r *PostgresOrderRepo) FindOrderForCancel(ctx context.Context, orderID uint) (*models.Order, error) {
+	var order models.Order
+	err := r.db.WithContext(ctx).
+		Preload("Restaurant").
+		First(&order, orderID).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &order, nil
+}
+
+func (r *PostgresOrderRepo) CancelOrder(ctx context.Context, orderID uint, allowed []models.OrderStatus) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("id = ? AND status IN ?", orderID, allowed).
+		Update("status", models.OrderStatusCancelled)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }

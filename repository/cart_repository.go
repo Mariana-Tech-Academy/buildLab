@@ -37,7 +37,7 @@ type CartRepository interface {
 	UpdateCartItemQuantity(ctx context.Context, itemID uint, quantity int) error
 
 	// AddItemForUser stores the cart restaurant and inserts or increments the line in one transaction.
-	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int) (cartID uint, newQuantity int, err error)
+	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int, price int64) (cartID uint, newQuantity int, err error)
 
 	// GetCartWithItems finds a customer's cart, including its items and their menu details.
 	GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error)
@@ -171,6 +171,7 @@ func (r *PostgresCartRepo) AddItemForUser(
 	menuItemID uint,
 	quantity int,
 	maxQuantity int,
+	price int64,
 ) (uint, int, error) {
 	if quantity < 1 || maxQuantity < 1 || quantity > maxQuantity {
 		return 0, 0, ErrQuantityLimit
@@ -183,7 +184,9 @@ func (r *PostgresCartRepo) AddItemForUser(
 		if err != nil {
 			return err
 		}
-		quantityNow, err := upsertCartItem(tx, cart.ID, menuItemID, quantity, maxQuantity)
+		quantityNow, err := upsertCartItem(
+			tx, cart.ID, menuItemID, quantity, maxQuantity, price,
+		)
 		if err != nil {
 			return err
 		}
@@ -239,7 +242,7 @@ func lockOrCreateCart(tx *gorm.DB, userID, restaurantID uint) (*models.Cart, err
 	return &cart, nil
 }
 
-func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity int) (int, error) {
+func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity int, price int64) (int, error) {
 	var item models.CartItem
 	err := tx.Where("cart_id = ? AND menu_item_id = ?", cartID, menuItemID).First(&item).Error
 	if err == nil {
@@ -252,7 +255,7 @@ func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity 
 	if err := tx.SavePoint("create_item").Error; err != nil {
 		return 0, err
 	}
-	item = models.CartItem{CartID: cartID, MenuItemID: menuItemID, Quantity: quantity}
+	item = models.CartItem{CartID: cartID, MenuItemID: menuItemID, Quantity: quantity, PriceAtAddition: price}
 	if err := tx.Create(&item).Error; err != nil {
 		if !isUniqueViolation(err) {
 			return 0, err

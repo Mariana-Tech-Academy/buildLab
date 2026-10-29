@@ -1,17 +1,18 @@
 package repository
 
 import (
-	"Fhub/models"
 	"context"
+
+	"Fhub/models"
 
 	"gorm.io/gorm"
 )
 
 type AdminRepository interface {
-	//ListAllOrders gets a single page or every order, optionally filtered by status
+	// ListAllOrders gets one page of orders, optionally filtered by status and search.
 	ListAllOrders(ctx context.Context, status, search string, limit, offset int) ([]models.Order, int64, error)
 
-	//GetOrderForAdmin gets one order with its customer, restaurant and items
+	// GetOrderForAdmin gets one order with its customer, restaurant and items.
 	GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error)
 }
 
@@ -23,7 +24,7 @@ func NewAdminRepository(db *gorm.DB) AdminRepository {
 	return &PostgresAdminRepo{db: db}
 }
 
-// ListAllOrders gets one page of orders for the admin, plus thte total no. of matching orders.
+// ListAllOrders gets one page of orders for the admin, plus the total number of matching orders.
 func (r *PostgresAdminRepo) ListAllOrders(ctx context.Context, status, search string, limit, offset int) ([]models.Order, int64, error) {
 	var total int64
 	if err := r.adminOrdersQuery(ctx, status, search).Count(&total).Error; err != nil {
@@ -54,16 +55,16 @@ func (r *PostgresAdminRepo) adminOrdersQuery(ctx context.Context, status, search
 	}
 
 	if search != "" {
-		like := "%" + search + "%"
+		pattern := likeContains(search)
 		query = query.
-			Joins("JOIN users ON users.id = orders.customer_id").
-			Where("orders.order_number ILIKE ? OR users.email ILIKE ?", like, like)
+			Joins("LEFT JOIN users ON users.id = orders.customer_id").
+			Where("orders.order_number ILIKE ? OR users.email ILIKE ?", pattern, pattern)
 	}
 
 	return query
 }
 
-// GetOrderForAdmin gets one order by ID with its customer, restaurant and items
+// GetOrderForAdmin gets one order by ID with its customer, restaurant and items.
 func (r *PostgresAdminRepo) GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error) {
 	var order models.Order
 

@@ -86,7 +86,7 @@ func (h *AdminHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request
 	utils.Success(w, http.StatusOK, "role updated successfully", newUserResponse(user))
 }
 
-// AdminOrderResponse is one order as seen by an admin.
+// adminOrderResponse is one order as seen by an admin.
 // It reuses the restaurant manager's order response (customer, items, totals and delivery details)
 // and adds the customer's email and the restaurant.
 type adminOrderResponse struct {
