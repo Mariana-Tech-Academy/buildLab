@@ -34,6 +34,9 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	// authenticated routes: GET /orders, GET /orders/{id}
 	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
 	authed := protected(router, tokens, blacklist)
+    authed.HandleFunc("/orders", orderHandler.ViewOrder).Methods(http.MethodGet)
+
+
 	// Allows logged-in customers to view their own orders.
 	customer.HandleFunc("/orders/{id}", orderHandler.GetOrderByID).Methods("GET")
 

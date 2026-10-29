@@ -308,3 +308,61 @@ func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
 }
+
+
+
+
+
+func (h *OrderHandler) ViewOrder(w http.ResponseWriter, r *http.Request) {
+
+
+      claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+    page, pageSize := parsePagination(r)
+    
+	orders, total, err := h.OrderService.List(r.Context(),claims.UserID, r.URL.Query().Get("status"), page, pageSize) 
+	if err != nil {
+
+        utils.Error(w, http.StatusBadRequest, err.Error())
+	
+		return
+	}
+	writePage(w, "ok", orders, page, pageSize, total)
+}
+
+
+
+
+
+
+// parsePagination reads page and page_size with sensible defaults and a
+// maximum page size of 100 (SRCH-03).
+func parsePagination(r *http.Request) (page, pageSize int) {
+	page = 1
+	pageSize = 20
+
+	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 0 {
+		page = v
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("page_size")); err == nil && v > 0 {
+		pageSize = v
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
+// writePage renders a paginated list response including the total count and
+// the current page
+func writePage(w http.ResponseWriter, message string, items any, page, pageSize int, total int64) {
+	utils.Success(w, http.StatusOK, message, map[string]any{
+		"items":     items,
+		"page":      page,
+		"page_size": pageSize,
+		"total":     total,
+	})
+}
