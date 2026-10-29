@@ -15,24 +15,39 @@ import (
 )
 
 func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
-	repo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(repo)
-	orderHandler := handlers.NewOrderHandler(orderService)
 
-	// customer routes: POST /orders (checkout)
-	customer := protected(router, tokens, blacklist)
-	customer.Use(middleware.RequireRole(models.RoleCustomer))
+    // Initialise repositories.
+    orderRepo := repository.NewOrderRepository(db)
+    restaurantRepo := repository.NewRestaurantRepository(db)
 
-	// CHK-02: Allow authenticated customers to validate delivery information.
-	customer.HandleFunc("/orders/delivery/validate", orderHandler.ValidateDeliveryInfo).Methods(http.MethodPost)
+    // Initialise services.
+    restaurantService := service.NewRestaurantService(restaurantRepo)
+    orderService := service.NewOrderService(orderRepo, restaurantService)
 
-	// authenticated routes: GET /orders, GET /orders/{id}
-	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
-	authed := protected(router, tokens, blacklist)
+    // Initialise handler.
+    orderHandler := handlers.NewOrderHandler(orderService)
 
-	// manager/admin routes: PATCH /orders/{id}/status
-	staff := protected(router, tokens, blacklist)
-	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
+    // Customer routes.
+    customer := protected(router, tokens, blacklist)
+    customer.Use(middleware.RequireRole(models.RoleCustomer))
 
-	_, _ = authed, staff
+    customer.HandleFunc(
+        "/orders/delivery/validate",
+        orderHandler.ValidateDeliveryInfo,
+    ).Methods(http.MethodPost)
+
+    // Authenticated routes for future order retrieval.
+    authed := protected(router, tokens, blacklist)
+
+    // Manager/Admin routes.
+    staff := protected(router, tokens, blacklist)
+    staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
+
+    // Update order status.
+    staff.HandleFunc(
+        "/restaurants/{restaurantId:[0-9]+}/orders/{orderId:[0-9]+}/status",
+        orderHandler.UpdateOrderStatus,
+    ).Methods(http.MethodPatch)
+
+    _ = authed
 }

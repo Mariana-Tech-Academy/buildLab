@@ -5,8 +5,10 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-
+    "Fhub/models"
 	"Fhub/repository"
+	"fmt"
+    "gorm.io/gorm"
 )
 
 const (
@@ -18,18 +20,118 @@ const (
 )
 
 var ErrRestaurantNotActive = errors.New("restaurant is not active")
-
+var (
+    ErrOrderNotFound = errors.New("order not found")
+    ErrOrderForbidden = errors.New("you cannot update an order belonging to another restaurant")
+    ErrInvalidOrderStatus = errors.New("invalid order status")
+    ErrInvalidStatusTransition = errors.New("invalid order status transition")
+    ErrOrderStatusFinal = errors.New("delivered or cancelled orders cannot be updated")
+)
 type OrderService interface {
 	CanAcceptOrder(ctx context.Context, restaurantID uint) error
 	ValidateDeliveryInfo(input *DeliveryInfoInput) map[string]string
+	UpdateOrderStatus(
+    ctx context.Context,
+    orderID uint,
+    restaurantID uint,
+    actorID uint,
+    role models.Role,
+    newStatus models.OrderStatus,
+) error
+}
+// UpdateOrderStatus validates and updates an order's status.
+func (s *orderService) UpdateOrderStatus(
+    ctx context.Context,
+    orderID uint,
+    restaurantID uint,
+    actorID uint,
+    role models.Role,
+    newStatus models.OrderStatus,
+) error {
+
+    // Retrieve the order from the database.
+    order, err := s.orderRepo.GetOrderByID(ctx, orderID)
+    if err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return ErrOrderNotFound
+        }
+        return err
+    }
+    // Verify that the authenticated manager owns the restaurant.
+if err := s.restaurantService.CheckOwnership(
+    ctx,
+    restaurantID,
+    actorID,
+    role,
+); err != nil {
+    return err
+}
+    // Ensure the order belongs to the manager's restaurant.
+    if order.RestaurantID != restaurantID {
+        return ErrOrderForbidden
+    }
+
+    // Delivered and cancelled orders cannot change status.
+    if order.Status == models.OrderStatusDelivered ||
+        order.Status == models.OrderStatusCancelled {
+        return ErrOrderStatusFinal
+    }
+
+    // Define the only allowed next status for each stage.
+    allowedTransitions := map[models.OrderStatus]models.OrderStatus{
+        models.OrderStatusPending:          models.OrderStatusConfirmed,
+        models.OrderStatusConfirmed:        models.OrderStatusPreparing,
+        models.OrderStatusPreparing:        models.OrderStatusReadyForDelivery,
+        models.OrderStatusReadyForDelivery: models.OrderStatusOutForDelivery,
+        models.OrderStatusOutForDelivery:   models.OrderStatusDelivered,
+    }
+
+    expectedStatus, ok := allowedTransitions[order.Status]
+    if !ok {
+        return ErrInvalidOrderStatus
+    }
+
+    // Prevent skipping stages or moving backwards.
+    if newStatus != expectedStatus {
+        return fmt.Errorf(
+            "%w: allowed next status is %s",
+            ErrInvalidStatusTransition,
+            expectedStatus,
+        )
+    }
+
+    // Save the new status and updated timestamp.
+    err = s.orderRepo.UpdateOrderStatus(
+    ctx,
+    orderID,
+    restaurantID,
+    order.Status,
+    newStatus,
+)
+
+if errors.Is(err, gorm.ErrRecordNotFound) {
+    return fmt.Errorf(
+        "%w: order status has changed, please refresh and try again",
+        ErrInvalidStatusTransition,
+    )
+}
+
+return err
 }
 
 type orderService struct {
-	orderRepo repository.OrderRepository
+    orderRepo          repository.OrderRepository
+    restaurantService  RestaurantService
 }
 
-func NewOrderService(repo repository.OrderRepository) OrderService {
-	return &orderService{orderRepo: repo}
+func NewOrderService(
+    repo repository.OrderRepository,
+    restaurantService RestaurantService,
+) OrderService {
+    return &orderService{
+        orderRepo:         repo,
+        restaurantService: restaurantService,
+    }
 }
 
 // CanAcceptOrder is used by checkout (when implemented) to reject orders
