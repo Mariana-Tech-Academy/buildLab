@@ -49,6 +49,7 @@ func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 
 	// ORD-04: Allow managers to view orders belonging to their restaurant.
 	staff.HandleFunc("/restaurants/{id}/orders", orderHandler.GetRestaurantOrders).Methods(http.MethodGet)
+	staff.HandleFunc("/restaurants/{id}/orders/{orderId}/status", orderHandler.UpdateOrderStatus).Methods(http.MethodPatch)
 
 	_, _ = authed, staff
 }

@@ -35,6 +35,12 @@ type OrderRepository interface {
 
 	// CancelOrder sets an order's status to cancelled, but only if it is still in one of the allowed statuses.
 	CancelOrder(ctx context.Context, orderID uint, allowed []models.OrderStatus) error
+
+	// GetOrderForRestaurant gets one order that belongs to the restaurant.
+	GetOrderForRestaurant(ctx context.Context, orderID, restaurantID uint) (*models.Order, error)
+
+	// UpdateOrderStatus sets the status only when it is still currentStatus.
+	UpdateOrderStatus(ctx context.Context, orderID, restaurantID uint, currentStatus, newStatus models.OrderStatus) error
 }
 
 type PostgresOrderRepo struct {
@@ -213,5 +219,30 @@ func (r *PostgresOrderRepo) CancelOrder(ctx context.Context, orderID uint, allow
 		return gorm.ErrRecordNotFound
 	}
 
+	return nil
+}
+
+func (r *PostgresOrderRepo) GetOrderForRestaurant(ctx context.Context, orderID, restaurantID uint) (*models.Order, error) {
+	var order models.Order
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (r *PostgresOrderRepo) UpdateOrderStatus(ctx context.Context, orderID, restaurantID uint, currentStatus, newStatus models.OrderStatus) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("id = ? AND restaurant_id = ? AND status = ?", orderID, restaurantID, currentStatus).
+		Update("status", newStatus)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
 	return nil
 }

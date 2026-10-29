@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"Fhub/auth"
@@ -392,5 +393,65 @@ func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 		ID:          order.ID,
 		OrderNumber: order.OrderNumber,
 		Status:      order.Status,
+	})
+}
+
+type orderStatusResponse struct {
+	ID     uint               `json:"id"`
+	Status models.OrderStatus `json:"status"`
+}
+
+// UpdateOrderStatus handles PATCH /api/restaurants/{id}/orders/{orderId}/status.
+func (h *OrderHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+	orderID, err := strconv.ParseUint(mux.Vars(r)["orderId"], 10, 64)
+	if err != nil || orderID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid order ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Status models.OrderStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Status = models.OrderStatus(strings.TrimSpace(string(req.Status)))
+
+	err = h.OrderService.UpdateOrderStatus(r.Context(), uint(orderID), uint(restaurantID), claims.UserID, claims.Role, req.Status)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrOrderStatusForbidden):
+			utils.Error(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrInvalidStatusTransition), errors.Is(err, service.ErrOrderStatusFinal):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("update order status: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order status updated successfully", orderStatusResponse{
+		ID:     uint(orderID),
+		Status: req.Status,
 	})
 }
