@@ -6,81 +6,66 @@ import (
 
 	"Fhub/models"
 	"Fhub/repository"
+
+	"gorm.io/gorm"
 )
 
 // CheckoutService defines the checkout operation.
 type CheckoutService interface {
-	PlaceOrder(
-		ctx context.Context,
-		customerID uint,
-		request CheckoutRequest,
-	) (*models.Order, error)
+	PlaceOrder(ctx context.Context, customerID uint, request DeliveryInfoInput) (*models.Order, error)
 }
 
-// checkoutService holds the repository used for checkout.
 type checkoutService struct {
 	checkoutRepo repository.CheckoutRepository
 }
 
 // NewCheckoutService creates a checkout service.
-func NewCheckoutService(
-	repo repository.CheckoutRepository,
-) CheckoutService {
-	return &checkoutService{
-		checkoutRepo: repo,
-	}
+func NewCheckoutService(repo repository.CheckoutRepository) CheckoutService {
+	return &checkoutService{checkoutRepo: repo}
 }
 
 // PlaceOrder validates the checkout details and creates the order.
-func (s *checkoutService) PlaceOrder(
-	ctx context.Context,
-	customerID uint,
-	request CheckoutRequest,
-) (*models.Order, error) {
-
-	// Check that the customer ID is valid.
+func (s *checkoutService) PlaceOrder(ctx context.Context, customerID uint, request DeliveryInfoInput) (*models.Order, error) {
 	if customerID == 0 {
 		return nil, errors.New("invalid customer ID")
 	}
-
-	// Check that the delivery details are complete.
-	if err := request.Validate(); err != nil {
-		return nil, err
+	if errs := (&orderService{}).ValidateDeliveryInfo(&request); len(errs) > 0 {
+		return nil, ErrInvalidDelivery
 	}
 
-	// Retrieve the customer's cart.
 	checkoutCart, err := s.checkoutRepo.GetCheckoutCart(ctx, customerID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrEmptyCart
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	// Check that the cart contains valid items.
 	if err := ValidateCheckoutCart(checkoutCart); err != nil {
 		return nil, err
 	}
 
-	// Generate an order number using the team's format.
-	orderNumber, err := GenerateCheckoutOrderNumber()
-	if err != nil {
-		return nil, err
-	}
-
-	// Use a temporary delivery fee until the team confirms the calculation.
-	deliveryFee := int64(0)
-
-	// Pass the checkout details to the repository.
-	input := repository.CheckoutInput{
+	order, err := s.checkoutRepo.CreateCheckoutOrder(ctx, repository.CheckoutInput{
 		CustomerID:           customerID,
-		DeliveryName:         request.DeliveryName,
-		DeliveryPhone:        request.DeliveryPhone,
-		DeliveryAddress:      request.DeliveryAddress,
-		DeliveryCity:         request.DeliveryCity,
-		DeliveryState:        request.DeliveryState,
+		DeliveryName:         request.RecipientName,
+		DeliveryPhone:        request.Phone,
+		DeliveryAddress:      request.Address,
+		DeliveryCity:         request.City,
+		DeliveryState:        request.State,
 		DeliveryInstructions: request.DeliveryInstructions,
-		OrderNumber:          orderNumber,
-		DeliveryFee:          deliveryFee,
+		DeliveryFee:          repository.DeliveryFee,
+		Subtotal:             CalculateCheckoutSubtotal,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrEmptyCart):
+			return nil, ErrEmptyCart
+		case errors.Is(err, repository.ErrUnavailableItem):
+			return nil, ErrUnavailableItem
+		case errors.Is(err, repository.ErrRestaurantInactive), errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, ErrRestaurantNotFound
+		default:
+			return nil, err
+		}
 	}
-
-	// Create the order and clear the cart in one transaction.
-	return s.checkoutRepo.CreateCheckoutOrder(ctx, input)
+	return order, nil
 }

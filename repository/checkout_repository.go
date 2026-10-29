@@ -1,54 +1,48 @@
 package repository
 
 import (
-	"Fhub/models"
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"math"
+	"time"
+
+	"Fhub/models"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"math"
 )
+
+// ErrRestaurantInactive means checkout was asked to charge a restaurant that is not active.
+var ErrRestaurantInactive = errors.New("restaurant is not active")
 
 // CheckoutRepository defines the database operations needed for checkout.
 type CheckoutRepository interface {
-
-	// GetCheckoutCart retrieves a customer's cart and it's items.
-	GetCheckoutCart(
-		ctx context.Context,
-		customerID uint,
-	) (*CheckoutCart, error)
-
-	// CreateCheckoutOrder processes an order inside one database transaction.
-	CreateCheckoutOrder(
-		ctx context.Context,
-		input CheckoutInput,
-	) (*models.Order, error)
+	GetCheckoutCart(ctx context.Context, customerID uint) (*CheckoutCart, error)
+	CreateCheckoutOrder(ctx context.Context, input CheckoutInput) (*models.Order, error)
 }
 
-// CheckoutCart contains the cart and it's items.
+// CheckoutCart contains the cart and its items.
 type CheckoutCart struct {
 	Cart  models.Cart
 	Items []models.CartItem
 }
 
-// GetCheckoutCart retrieves the customer's cart and it's items.
-func (r *PostgresOrderRepo) GetCheckoutCart(
-	ctx context.Context,
-	customerID uint,
-) (*CheckoutCart, error) {
+// NewCheckoutRepository creates the repository used by checkout.
+func NewCheckoutRepository(db *gorm.DB) CheckoutRepository {
+	return &PostgresOrderRepo{db: db}
+}
 
+// GetCheckoutCart retrieves the customer's cart and its items.
+func (r *PostgresOrderRepo) GetCheckoutCart(ctx context.Context, customerID uint) (*CheckoutCart, error) {
 	var cart models.Cart
-
-	// Find the cart belonging to the customer.
 	err := r.db.WithContext(ctx).
 		Preload("Items").
 		First(&cart, "user_id = ?", customerID).Error
-
 	if err != nil {
 		return nil, err
 	}
-
-	// Return the cart and it's items.
 	return &CheckoutCart{
 		Cart:  cart,
 		Items: cart.Items,
@@ -59,7 +53,6 @@ func (r *PostgresOrderRepo) GetCheckoutCart(
 type CheckoutInput struct {
 	CustomerID uint
 
-	// Delivery details provided by the customer.
 	DeliveryName         string
 	DeliveryPhone        string
 	DeliveryAddress      string
@@ -67,167 +60,94 @@ type CheckoutInput struct {
 	DeliveryState        string
 	DeliveryInstructions string
 
-	OrderNumber string
 	DeliveryFee int64
+	Subtotal    func(items []models.CartItem, prices map[uint]int64) (int64, error)
 }
 
-// CreateCheckoutOrder processes checkout inside one database transaction.
+type checkoutLine struct {
+	name  string
+	price int64
+}
+
+// CreateCheckoutOrder creates the order, stores item snapshots, and clears the cart.
 // If an error occurs, GORM rolls back the transaction.
-func (r *PostgresOrderRepo) CreateCheckoutOrder(
-	ctx context.Context,
-	input CheckoutInput,
-) (*models.Order, error) {
+func (r *PostgresOrderRepo) CreateCheckoutOrder(ctx context.Context, input CheckoutInput) (*models.Order, error) {
+	if input.Subtotal == nil {
+		return nil, errors.New("checkout subtotal is not configured")
+	}
 
 	var order models.Order
-
-	// Start a database transaction.
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var cart models.Cart
-
-		// Lock the customer's cart while checkout is processing.
-		err := tx.
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ?", input.CustomerID).
 			First(&cart).Error
-
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrEmptyCart
+		}
 		if err != nil {
-
-			// Reject checkout if the customer has no cart.
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errors.New("customer cart not found")
-			}
 			return err
 		}
-		// Retrieve the cart items using the same transaction.
+
 		var items []models.CartItem
-
-		if err := tx.
-			Where("cart_id = ?", cart.ID).
-			Find(&items).Error; err != nil {
+		if err := tx.Where("cart_id = ?", cart.ID).Find(&items).Error; err != nil {
 			return err
 		}
-
-		// Reject checkout if the cart contains no items.
-		if len(items) == 0 {
-			return errors.New("cannot checkout an empty cart")
+		if len(items) == 0 || cart.RestaurantID == nil {
+			return ErrEmptyCart
 		}
 
-		// Check that the cart has a restaurant.
-		if cart.RestaurantID == nil {
-			return errors.New("cart has no restaurant")
-		}
-
-		// Get the restaurant linked to the customer's cart.
 		var restaurant models.Restaurant
-
-		err = tx.
-			Clauses(clause.Locking{Strength: "SHARE"}).
+		err = tx.Clauses(clause.Locking{Strength: "SHARE"}).
 			First(&restaurant, *cart.RestaurantID).Error
-
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return gorm.ErrRecordNotFound
+		}
 		if err != nil {
-
-			// Return an error if the restaurant cannot be found.
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errors.New("restaurant not found")
-			}
-
 			return err
 		}
-
-		// Check that the restaurant is active.
 		if restaurant.Status != models.RestaurantStatusActive {
-			return errors.New("restaurant is not active")
+			return ErrRestaurantInactive
 		}
-		var subtotal int64
-		prices := make(map[uint]int64)
 
-		// Check each cart item against the current menu information.
+		lines := make(map[uint]checkoutLine, len(items))
+		prices := make(map[uint]int64, len(items))
 		for _, item := range items {
 			var menuItem models.MenuItem
-
-			// Get the menu item and lock it during checkout.
-			err = tx.
-				Clauses(clause.Locking{Strength: "SHARE"}).
+			err = tx.Clauses(clause.Locking{Strength: "SHARE"}).
 				First(&menuItem, item.MenuItemID).Error
-
-			if err != nil {
-				// Return an error if the menu item cannot be found.
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return errors.New("menu item not found")
-				}
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
-
-			// Check that the menu item is available.
-			if !menuItem.Available {
-				return errors.New("menu item is unavailable")
+			if errors.Is(err, gorm.ErrRecordNotFound) || !menuItem.Available || menuItem.RestaurantID != *cart.RestaurantID || item.Quantity <= 0 {
+				return ErrUnavailableItem
 			}
-
-			// Check that the item belongs to the selected restaurant.
-			if menuItem.RestaurantID != *cart.RestaurantID {
-				return errors.New("menu item does not belong to this restaurant")
-			}
-
-			// Check that the quantity is valid.
-			if item.Quantity <= 0 {
-				return errors.New("invalid item quantity")
-			}
-
-			// Check that the menu price is valid.
 			if menuItem.Price < 0 {
 				return errors.New("invalid menu item price")
 			}
-
-			// Store the current price for this menu item.
+			lines[item.MenuItemID] = checkoutLine{name: menuItem.Name, price: menuItem.Price}
 			prices[item.MenuItemID] = menuItem.Price
-
-			// Calculate the cost of this item.
-			quantity := int64(item.Quantity)
-
-			// Check that multiplying price by quantity will not overflow.
-			if menuItem.Price > 0 &&
-				quantity > math.MaxInt64/menuItem.Price {
-				return errors.New("item total exceeds the allowed amount")
-			}
-
-			itemTotal := menuItem.Price * quantity
-
-			// Check that adding the item will not overflow the subtotal.
-			if subtotal > math.MaxInt64-itemTotal {
-				return errors.New("order subtotal exceeds the allowed amount")
-			}
-
-			// Add the item cost to the subtotal.
-			subtotal += itemTotal
 		}
 
-		// Check that the delivery fee is not negative.
+		subtotal, err := input.Subtotal(items, prices)
+		if err != nil {
+			return err
+		}
 		if input.DeliveryFee < 0 {
 			return errors.New("invalid delivery fee")
 		}
-
-		// Check that adding the delivery fee will not overflow.
 		if subtotal > math.MaxInt64-input.DeliveryFee {
 			return errors.New("order total exceeds the allowed amount")
 		}
 
-		// Calculate the final total including delivery.
-		total := subtotal + input.DeliveryFee
-
-		// Check that the order number has been provided.
-		if input.OrderNumber == "" {
-			return errors.New("order number is required")
-		}
-
-		// Create the order using the customer's delivery details.
 		order = models.Order{
-			OrderNumber:          input.OrderNumber,
 			CustomerID:           input.CustomerID,
 			RestaurantID:         *cart.RestaurantID,
+			Restaurant:           restaurant,
 			Status:               models.OrderStatusPending,
 			Subtotal:             subtotal,
 			DeliveryFee:          input.DeliveryFee,
-			Total:                total,
+			Total:                subtotal + input.DeliveryFee,
 			DeliveryName:         input.DeliveryName,
 			DeliveryPhone:        input.DeliveryPhone,
 			DeliveryAddress:      input.DeliveryAddress,
@@ -235,63 +155,87 @@ func (r *PostgresOrderRepo) CreateCheckoutOrder(
 			DeliveryState:        input.DeliveryState,
 			DeliveryInstructions: input.DeliveryInstructions,
 		}
-		// Save the order to the database.
-		if err := tx.Create(&order).Error; err != nil {
+		if err := insertOrder(tx, &order); err != nil {
 			return err
 		}
-		// Save each purchased item against the new order.
+		order.Restaurant = restaurant
+
 		for _, item := range items {
-			// Retrieve the menu item details for the order snapshot.
-			var menuItem models.MenuItem
-			if err := tx.First(&menuItem, item.MenuItemID).Error; err != nil {
-				return err
-			}
-			// Store the purchased item's name, price and quantity.
+			line := lines[item.MenuItemID]
 			orderItem := models.OrderItem{
 				OrderID:    order.ID,
 				MenuItemID: item.MenuItemID,
-				Name:       menuItem.Name,
-				UnitPrice:  prices[item.MenuItemID],
+				Name:       line.name,
+				UnitPrice:  line.price,
 				Quantity:   item.Quantity,
-				LineTotal:  prices[item.MenuItemID] * int64(item.Quantity),
+				LineTotal:  line.price * int64(item.Quantity),
 			}
-			// Save the order item in the same transaction.
 			if err := tx.Create(&orderItem).Error; err != nil {
 				return err
 			}
-			// Add the purchased item to the order response.
 			order.Items = append(order.Items, orderItem)
 		}
 
-		// Simulate a successful payment without using a payment provider.
-		paymentSuccessful := true
-
-		// Stop checkout if the simulated payment fails.
-		if !paymentSuccessful {
-			return errors.New("simulated payment failed")
-		}
-		// Remove the purchased items from the customer's cart.
-
-		if err := tx.
-			Where("cart_id = ?", cart.ID).
-			Delete(&models.CartItem{}).Error; err != nil {
+		if err := simulateCheckoutPayment(); err != nil {
 			return err
 		}
-		// Reset the cart so the customer can order from another restaurant.
-		if err := tx.
-			Model(&cart).
-			Update("restaurant_id", nil).Error; err != nil {
-
+		if err := tx.Unscoped().Where("cart_id = ?", cart.ID).Delete(&models.CartItem{}).Error; err != nil {
 			return err
 		}
-		// Commit the transaction when all checkout operations succeed.
-		return nil
+		return clearCartRestaurant(tx, cart.ID)
 	})
-
-	// Return any error from the transaction.
 	if err != nil {
 		return nil, err
 	}
-
 	return &order, nil
+}
+
+// simulateCheckoutPayment accepts the payment. A returned error rolls the order back.
+func simulateCheckoutPayment() error {
+	return nil
+}
+
+func insertOrder(tx *gorm.DB, order *models.Order) error {
+	const attempts = 5
+	for attempt := 0; attempt < attempts; attempt++ {
+		number, err := nextOrderNumber(tx)
+		if err != nil {
+			return err
+		}
+		order.ID = 0
+		order.OrderNumber = number
+		if err := tx.SavePoint("create_order").Error; err != nil {
+			return err
+		}
+		if err := tx.Create(order).Error; err != nil {
+			if !isUniqueViolation(err) {
+				return err
+			}
+			if err := tx.RollbackTo("create_order").Error; err != nil {
+				return err
+			}
+			continue
+		}
+		return nil
+	}
+	return errors.New("could not allocate an order number")
+}
+
+func nextOrderNumber(tx *gorm.DB) (string, error) {
+	prefix := "ORD-" + time.Now().Format("20060102") + "-"
+	var sequence sql.NullInt64
+	err := tx.Raw(
+		`SELECT MAX(CAST(SPLIT_PART(order_number, '-', 3) AS INTEGER))
+		 FROM orders
+		 WHERE order_number LIKE ?`,
+		prefix+"%",
+	).Row().Scan(&sequence)
+	if err != nil {
+		return "", err
+	}
+	next := 1
+	if sequence.Valid {
+		next = int(sequence.Int64) + 1
+	}
+	return fmt.Sprintf("%s%03d", prefix, next), nil
 }

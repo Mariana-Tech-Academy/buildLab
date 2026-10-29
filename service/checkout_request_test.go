@@ -2,77 +2,61 @@ package service
 
 import "testing"
 
-// Test that missing or empty delivery information is rejected.
-func TestCheckoutRequestInvalid(t *testing.T) {
-
-	// Each test checks a different invalid delivery field.
+func TestDeliveryDetailsInvalid(t *testing.T) {
+	svc := &orderService{}
+	valid := DeliveryInfoInput{
+		RecipientName: "Alex Smith",
+		Phone:         "01131234567",
+		Address:       "10 High Street",
+		City:          "London",
+		State:         "Greater London",
+	}
 	tests := []struct {
-		name    string
-		request CheckoutRequest
+		name  string
+		input DeliveryInfoInput
+		field string
 	}{
+		{name: "missing name", input: withoutDeliveryField(valid, "recipient_name"), field: "recipient_name"},
+		{name: "missing phone", input: withoutDeliveryField(valid, "phone"), field: "phone"},
+		{name: "missing address", input: withoutDeliveryField(valid, "address"), field: "address"},
+		{name: "missing city", input: withoutDeliveryField(valid, "city"), field: "city"},
+		{name: "missing state", input: withoutDeliveryField(valid, "state"), field: "state"},
 		{
-			name: "Missing name",
-			request: CheckoutRequest{
-				DeliveryPhone:   "07123456789",
-				DeliveryAddress: "10 High Street",
-				DeliveryCity:    "London",
-				DeliveryState:   "Greater London",
+			name: "spaces only",
+			input: DeliveryInfoInput{
+				RecipientName: "   ",
+				Phone:         "01131234567",
+				Address:       "10 High Street",
+				City:          "London",
+				State:         "Greater London",
 			},
-		},
-		{
-			name: "Missing phone",
-			request: CheckoutRequest{
-				DeliveryName:    "Alex Smith",
-				DeliveryAddress: "10 High Street",
-				DeliveryCity:    "London",
-				DeliveryState:   "Greater London",
-			},
-		},
-		{
-			name: "Missing address",
-			request: CheckoutRequest{
-				DeliveryName:  "Alex Smith",
-				DeliveryPhone: "07123456789",
-				DeliveryCity:  "London",
-				DeliveryState: "Greater London",
-			},
-		},
-		{
-			name: "Missing city",
-			request: CheckoutRequest{
-				DeliveryName:    "Alex Smith",
-				DeliveryPhone:   "07123456789",
-				DeliveryAddress: "10 High Street",
-				DeliveryState:   "Greater London",
-			},
-		},
-		{
-			name: "Missing state",
-			request: CheckoutRequest{
-				DeliveryName:    "Alex Smith",
-				DeliveryPhone:   "07123456789",
-				DeliveryAddress: "10 High Street",
-				DeliveryCity:    "London",
-			},
-		},
-		{
-			name: "Spaces only",
-			request: CheckoutRequest{
-				DeliveryName:    "   ",
-				DeliveryPhone:   "07123456789",
-				DeliveryAddress: "10 High Street",
-				DeliveryCity:    "London",
-				DeliveryState:   "Greater London",
-			},
+			field: "recipient_name",
 		},
 	}
 
-	// Run each test and check that validation rejects it.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.request.Validate(); err == nil {
-				t.Error("Expected validation error, but got none")
+			input := tt.input
+			errs := svc.ValidateDeliveryInfo(&input)
+			if errs[tt.field] == "" {
+				t.Errorf("expected %s to be invalid, got %v", tt.field, errs)
 			}
 		})
 	}
+}
+
+func withoutDeliveryField(input DeliveryInfoInput, field string) DeliveryInfoInput {
+	switch field {
+	case "recipient_name":
+		input.RecipientName = ""
+	case "phone":
+		input.Phone = ""
+	case "address":
+		input.Address = ""
+	case "city":
+		input.City = ""
+	case "state":
+		input.State = ""
+	}
+	return input
 }

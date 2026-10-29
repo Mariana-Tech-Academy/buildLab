@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"Fhub/auth"
@@ -80,6 +81,23 @@ func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
 	utils.Success(w, http.StatusCreated, "menu item created", newMenuItemResponse(item))
 }
 
+// GetMenuItemByID handles GET /api/menu/{id}.
+func (h *MenuHandler) GetMenuItemByID(w http.ResponseWriter, r *http.Request) {
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	item, err := h.MenuService.GetMenuItemByID(r.Context(), itemID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "menu item retrieved successfully", newMenuItemResponse(item))
+}
+
 // UpdateMenuItem handles PUT /api/menu/{id}.
 func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ClaimsFromContext(r.Context())
@@ -115,6 +133,42 @@ func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.Success(w, http.StatusOK, "menu item updated", newMenuItemResponse(item))
+}
+
+// SetAvailability handles PATCH /api/menu/{id}/availability.
+func (h *MenuHandler) SetAvailability(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	var req struct {
+		Available *bool `json:"available"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || req.Available == nil {
+		utils.Error(w, http.StatusBadRequest, "provide available as true or false")
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		utils.Error(w, http.StatusBadRequest, "request must contain one JSON object")
+		return
+	}
+
+	item, err := h.MenuService.SetAvailability(r.Context(), itemID, claims.UserID, claims.Role, *req.Available)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "menu item availability updated", newMenuItemResponse(item))
 }
 
 // DeleteMenuItem handles DELETE /api/menu/{id}.
@@ -166,4 +220,146 @@ func writeMenuError(w http.ResponseWriter, err error) {
 		log.Printf("menu handler: %v", err)
 		utils.Error(w, http.StatusInternalServerError, "internal server error")
 	}
+}
+
+func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) {
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	var categoryID *uint
+	if value := r.URL.Query().Get("category_id"); value != "" {
+		parsedID, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || parsedID == 0 {
+			utils.Error(w, http.StatusBadRequest, "invalid category ID")
+			return
+		}
+		id := uint(parsedID)
+		categoryID = &id
+	}
+
+	items, err := h.MenuService.ListRestaurantMenu(r.Context(), uint(restaurantID), categoryID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	responses := make([]menuItemResponse, 0, len(items))
+	for i := range items {
+		responses = append(responses, newMenuItemResponse(&items[i]))
+	}
+	utils.Success(w, http.StatusOK, "menu retrieved successfully", responses)
+}
+
+// Search handles GET /api/menu/search.
+// Price filters are minor units: 500 means 5.00.
+func (h *MenuHandler) Search(w http.ResponseWriter, r *http.Request) {
+	input, message := menuSearchInput(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.MenuService.Search(r.Context(), input)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	items := make([]menuItemResponse, 0, len(result.Items))
+	for i := range result.Items {
+		items = append(items, newMenuItemResponse(&result.Items[i]))
+	}
+	message = "menu items retrieved successfully"
+	if result.Total == 0 {
+		message = "No menu items found. Try another name or filter."
+	}
+	utils.Success(w, http.StatusOK, message, menuSearchResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type menuSearchResponse struct {
+	Items []menuItemResponse `json:"items"`
+	Page  int                `json:"page"`
+	Limit int                `json:"limit"`
+	Total int64              `json:"total"`
+}
+
+func menuSearchInput(r *http.Request) (service.MenuSearchInput, string) {
+	params := r.URL.Query()
+	input := service.MenuSearchInput{Name: strings.TrimSpace(params.Get("name"))}
+
+	page, ok := parseMenuQueryInt(params.Get("page"))
+	if !ok {
+		return input, "page must be a positive whole number"
+	}
+	limit, ok := parseMenuQueryInt(params.Get("limit"))
+	if !ok {
+		return input, "limit must be a positive whole number"
+	}
+	if limit > 50 {
+		return input, "limit must be between 1 and 50"
+	}
+	input.Page = page
+	input.Limit = limit
+
+	if params.Has("category_id") {
+		id, err := strconv.ParseUint(params.Get("category_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid category ID"
+		}
+		categoryID := uint(id)
+		input.CategoryID = &categoryID
+	}
+	if params.Has("restaurant_id") {
+		id, err := strconv.ParseUint(params.Get("restaurant_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid restaurant ID"
+		}
+		restaurantID := uint(id)
+		input.RestaurantID = &restaurantID
+	}
+	if params.Has("min_price") {
+		price, err := strconv.ParseInt(params.Get("min_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid min_price"
+		}
+		input.MinPrice = &price
+	}
+	if params.Has("max_price") {
+		price, err := strconv.ParseInt(params.Get("max_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid max_price"
+		}
+		input.MaxPrice = &price
+	}
+	if input.MinPrice != nil && input.MaxPrice != nil && *input.MinPrice > *input.MaxPrice {
+		return input, "min_price cannot exceed max_price"
+	}
+	if params.Has("available") {
+		raw := params.Get("available")
+		if raw != "true" && raw != "false" {
+			return input, "available must be true or false"
+		}
+		available := raw == "true"
+		input.Available = &available
+	}
+	return input, ""
+}
+
+func parseMenuQueryInt(value string) (int, bool) {
+	if value == "" {
+		return 0, true
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
 }

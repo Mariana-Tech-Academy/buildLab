@@ -31,8 +31,8 @@ func TestValidateCheckoutCartEmpty(t *testing.T) {
 	}
 
 	// Check that the correct error is returned.
-	if err := ValidateCheckoutCart(cart); !errors.Is(err, ErrCartEmpty) {
-		t.Errorf("Expected ErrCartEmpty, got: %v", err)
+	if err := ValidateCheckoutCart(cart); !errors.Is(err, ErrEmptyCart) {
+		t.Errorf("Expected ErrEmptyCart, got: %v", err)
 	}
 }
 
@@ -43,7 +43,7 @@ func TestValidateCheckoutCartMissing(t *testing.T) {
 	var cart *repository.CheckoutCart
 
 	// Check that the correct error is returned.
-	if err := ValidateCheckoutCart(cart); !errors.Is(err, ErrCartEmpty) {
-		t.Errorf("Expected ErrCartEmpty, got: %v", err)
+	if err := ValidateCheckoutCart(cart); !errors.Is(err, ErrEmptyCart) {
+		t.Errorf("Expected ErrEmptyCart, got: %v", err)
 	}
 }

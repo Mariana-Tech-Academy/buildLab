@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -13,31 +15,40 @@ import (
 )
 
 func OrderRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
+	// Create repositories for orders and restaurants.
 	repo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(repo)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+
+	// Pass both repositories into the order service.
+	orderService := service.NewOrderService(repo, restaurantRepo)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
-	// Create the checkout repository using the existing database connection.
-	checkoutRepo := repository.NewOrderRepository(db).(*repository.PostgresOrderRepo)
-	// Connect the checkout service to the repository.
-	checkoutService := service.NewCheckoutService(checkoutRepo)
-	// Create the checkout handler to process incoming checkout requests.
-	checkoutHandler := handlers.NewCheckoutHandler(checkoutService)
+	checkoutService := service.NewCheckoutService(repository.NewCheckoutRepository(db))
+	checkoutHandler := handlers.NewCheckoutHandler(checkoutService, orderService)
 
 	// customer routes: POST /orders (checkout)
 	customer := protected(router, tokens, blacklist)
 	customer.Use(middleware.RequireRole(models.RoleCustomer))
+	customer.HandleFunc("/orders/checkout/summary", orderHandler.GetCheckoutSummary).Methods(http.MethodGet)
+
+	// CHK-02: Allow authenticated customers to validate delivery information.
+	customer.HandleFunc("/orders/delivery/validate", orderHandler.ValidateDeliveryInfo).Methods(http.MethodPost)
 
 	// Connect checkout requests to the checkout handler.
-	customer.HandleFunc("/orders", checkoutHandler.PlaceOrder).Methods("POST")
+	customer.HandleFunc("/orders", checkoutHandler.PlaceOrder).Methods(http.MethodPost)
 
 	// authenticated routes: GET /orders, GET /orders/{id}
 	// The service scopes results by role: own orders, own restaurant's orders, or all for admin.
 	authed := protected(router, tokens, blacklist)
+	// Allows logged-in customers to view their own orders.
+	customer.HandleFunc("/orders/{id}", orderHandler.GetOrderByID).Methods("GET")
 
 	// manager/admin routes: PATCH /orders/{id}/status
 	staff := protected(router, tokens, blacklist)
 	staff.Use(middleware.RequireRole(models.RoleManager, models.RoleAdmin))
 
-	_, _, _, _ = orderHandler, customer, authed, staff
+	// ORD-04: Allow managers to view orders belonging to their restaurant.
+	staff.HandleFunc("/restaurants/{id}/orders", orderHandler.GetRestaurantOrders).Methods(http.MethodGet)
+
+	_, _ = authed, staff
 }
