@@ -25,4 +25,6 @@ func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 
 	admin.HandleFunc("/test", adminHandler.TestAdmin).Methods(http.MethodGet)
 	admin.HandleFunc("/users/{id}/role", adminHandler.SetUserRoleHandler).Methods(http.MethodPatch)
+	admin.HandleFunc("/users", adminHandler.ListUsers).Methods(http.MethodGet)
+	admin.HandleFunc("/users/{id}", adminHandler.GetUserDetails).Methods(http.MethodGet)
 }

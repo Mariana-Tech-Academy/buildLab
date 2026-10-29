@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"Fhub/auth"
 	"Fhub/models"
@@ -84,4 +85,84 @@ func (h *AdminHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	utils.Success(w, http.StatusOK, "role updated successfully", newUserResponse(user))
+}
+
+// Gets a list of users and allows searching by name or email.
+// This uses pagination to control how many users are shown.
+func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+
+	// Gets the search term from the URL.
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+
+	page := 1
+	limit := 10
+
+	// This checks if a page number has been provided.
+	if value := r.URL.Query().Get("page"); value != "" {
+		number, err := strconv.Atoi(value)
+		if err != nil || number < 1 {
+			utils.Error(w, http.StatusBadRequest, "invalid page number")
+			return
+		}
+		page = number
+	}
+	// This checks if a limit has been provided.
+	if value := r.URL.Query().Get("limit"); value != "" {
+		number, err := strconv.Atoi(value)
+		if err != nil || number < 1 || number > 50 {
+			utils.Error(w, http.StatusBadRequest, "limit must be between 1 and 50")
+			return
+		}
+		limit = number
+	}
+	// Gets the matching users from the service.
+	result, err := h.AdminService.ListUsers(r.Context(), search, page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrValidation) {
+			utils.Error(w, http.StatusBadRequest, "invalid pagination")
+			return
+		}
+
+		log.Printf("list users: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not retrieve users")
+		return
+	}
+	// Converts the users into responses without password information.
+	users := make([]UserResponse, 0, len(result.Users))
+	for i := range result.Users {
+		users = append(users, newUserResponse(&result.Users[i]))
+	}
+	// Returns the users and pagination information.
+	utils.Success(w, http.StatusOK, "users retrieved successfully", map[string]interface{}{
+		"users": users,
+		"page":  result.Page,
+		"limit": result.Limit,
+		"total": result.Total,
+	})
+}
+
+// Gets the details of a user using their ID. The password information is not included in the response.
+func (h *AdminHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
+
+	// Gets the user ID from the URL.
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || id == 0 || id > uint64(^uint(0)) {
+		utils.Error(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	// Gets the user details from the service.
+	user, err := h.AdminService.GetUserDetails(r.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			utils.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+
+		log.Printf("get user details: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "could not retrieve user")
+		return
+	}
+	// Returns the user details without password information.
+	utils.Success(w, http.StatusOK, "user retrieved successfully", newUserResponse(user))
 }
