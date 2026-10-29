@@ -22,7 +22,8 @@ func MenuRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blackl
 	menuService := service.NewMenuService(repo, categoryRepo, restaurantService)
 	menuHandler := handlers.NewMenuHandler(menuService)
 
-	// public routes: GET /restaurants/{id}/menu, GET /menu/{id}
+	// public routes: GET /menu/search, GET /restaurants/{id}/menu, GET /menu/{id}
+	router.HandleFunc("/menu/search", menuHandler.Search).Methods(http.MethodGet)
 	router.HandleFunc("/restaurants/{id}/menu", menuHandler.GetRestaurantMenu).Methods(http.MethodGet)
 	router.HandleFunc("/menu/{id}", menuHandler.GetMenuItemByID).Methods(http.MethodGet)
 	// manager routes: POST /menu, PUT /menu/{id}, DELETE /menu/{id}

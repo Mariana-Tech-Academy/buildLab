@@ -82,7 +82,7 @@ func writeCartError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrMenuItemNotFound):
 		utils.Error(w, http.StatusNotFound, "menu item not found")
 	case errors.Is(err, service.ErrCartRestaurantConflict):
-		utils.Error(w, http.StatusConflict, "cannot add items from different restaurants")
+		utils.Error(w, http.StatusConflict, "cart contains items from another restaurant; clear the cart before adding this item")
 	case errors.Is(err, service.ErrCartItemNotFound):
 		utils.Error(w, http.StatusNotFound, "cart item not found")
 	default:
@@ -165,24 +165,62 @@ func (h *CartHandler) UpdateQuantity(w http.ResponseWriter, r *http.Request) {
 
 	utils.Success(w, http.StatusOK, "cart item quantity updated", newUpdatedCartResponse(cart))
 }
+
 // GetCart handles GET /api/cart.
 // It retrieves the authenticated customer's cart and subtotal.
 func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 
-    // Get the authenticated customer's details from the request.
-    claims, err := auth.ClaimsFromContext(r.Context())
-    if err != nil {
-        utils.Error(w, http.StatusUnauthorized, "authentication required")
-        return
-    }
+	// Get the authenticated customer's details from the request.
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
 
-    // Retrieve the customer's cart using the service.
-    cart, err := h.CartService.GetCart(r.Context(), claims.UserID)
-    if err != nil {
-        writeCartError(w, err)
-        return
-    }
+	// Retrieve the customer's cart using the service.
+	cart, err := h.CartService.GetCart(r.Context(), claims.UserID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
 
-    // Return the cart details and subtotal.
-    utils.Success(w, http.StatusOK, "cart retrieved successfully", cart)
+	// Return the cart details and subtotal.
+	utils.Success(w, http.StatusOK, "cart retrieved successfully", cart)
+}
+
+// RemoveItem handles DELETE /api/cart/items/{id}.
+func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	cartItemID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	cart, err := h.CartService.RemoveItem(r.Context(), claims.UserID, cartItemID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "cart item removed", newUpdatedCartResponse(cart))
+}
+
+// Clear handles DELETE /api/cart.
+func (h *CartHandler) Clear(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	cart, err := h.CartService.Clear(r.Context(), claims.UserID)
+	if err != nil {
+		writeCartError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "cart cleared", newUpdatedCartResponse(cart))
 }
