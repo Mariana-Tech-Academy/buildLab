@@ -52,6 +52,15 @@ type OrderService interface {
 
 	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
 	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
+	List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error)
+}
+
+// CustomerOrdersPage is one page of the customer's own orders.
+type CustomerOrdersPage struct {
+	Orders []models.Order
+	Page   int
+	Limit  int
+	Total  int64
 }
 
 // RestaurantOrdersPage is one page of orders for a restaurant.
@@ -254,4 +263,22 @@ func (s *orderService) ValidateDeliveryInfo(input *DeliveryInfoInput) map[string
 	}
 
 	return errs
+}
+
+func (s *orderService) List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error) {
+	status = strings.TrimSpace(status)
+	if !isValidOrderStatus(status) {
+		return nil, ErrInvalidOrderStatus
+	}
+
+	page, limit, offset, err := orderPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	orders, total, err := s.orderRepo.ListForCustomer(ctx, customerID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &CustomerOrdersPage{Orders: orders, Page: page, Limit: limit, Total: total}, nil
 }
