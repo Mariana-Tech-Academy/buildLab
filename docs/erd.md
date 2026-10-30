@@ -85,7 +85,7 @@ erDiagram
     ORDER_ITEMS {
         uint id PK
         uint order_id FK
-        uint menu_item_id FK
+        uint menu_item_id FK "nullable, cleared if the menu item is deleted"
         string name "snapshot"
         int64 unit_price "snapshot"
         int quantity "> 0"
