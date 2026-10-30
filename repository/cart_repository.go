@@ -1,156 +1,411 @@
-
 package repository
 
 import (
-    "errors"
+	"context"
+	"errors"
 
-    "Fhub/models"
+	"Fhub/models"
 
-    "gorm.io/gorm"
-    "gorm.io/gorm/clause"
+	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-var ErrCartItemNotFound = errors.New("cart item not found")
+var (
+	ErrDifferentRestaurant = errors.New("cart contains items from another restaurant; clear the cart before adding this item")
+	ErrQuantityLimit       = errors.New("quantity exceeds the maximum")
+)
 
-// CartRepository defines the database operations.
+// CartRepository defines the database operations available for shopping carts.
+// Both CART-01 and CART-03 can use these methods.
 type CartRepository interface {
-    RemoveItem(userID, itemID uint) (*models.Cart, error)
-    Clear(userID uint) (*models.Cart, error)
+
+	// GetCartByUserID finds the cart belonging to a particular customer.
+	GetCartByUserID(ctx context.Context, userID uint) (*models.Cart, error)
+
+	// CreateCart saves a new shopping cart in the database.
+	CreateCart(ctx context.Context, cart *models.Cart) error
+
+	// GetCartItem finds a particular menu item inside a shopping cart.
+	GetCartItem(ctx context.Context, cartID uint, menuItemID uint) (*models.CartItem, error)
+
+	// CreateCartItem adds a new menu item to the customer's cart.
+	CreateCartItem(ctx context.Context, item *models.CartItem) error
+
+	// UpdateCartItemQuantity changes the quantity of an existing cart item.
+	// Hizra can reuse this method for CART-03.
+	UpdateCartItemQuantity(ctx context.Context, itemID uint, quantity int) error
+
+	// AddItemForUser stores the cart restaurant and inserts or increments the line in one transaction.
+	AddItemForUser(ctx context.Context, userID, restaurantID, menuItemID uint, quantity, maxQuantity int, price int64) (cartID uint, newQuantity int, err error)
+
+	// GetCartWithItems finds a customer's cart, including its items and their menu details.
+	GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error)
+
+	// SetItemQuantity replaces a cart item's quantity when the item belongs to the given cart.
+	SetItemQuantity(ctx context.Context, cartID, cartItemID uint, quantity int) error
+
+	// RemoveItem deletes one line from the customer's cart.
+	RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error)
+
+	// Clear removes every line and clears the cart restaurant.
+	Clear(ctx context.Context, userID uint) (*models.Cart, error)
 }
 
-// PostgresCartRepo connects to PostgreSQL.
+// PostgresCartRepo holds the database connection used by the repository.
 type PostgresCartRepo struct {
-    db *gorm.DB
+	db *gorm.DB
 }
 
-// NewCartRepository creates a repository.
+// NewCartRepository creates a new cart repository using the database connection.
 func NewCartRepository(db *gorm.DB) CartRepository {
-    return &PostgresCartRepo{db: db}
+	return &PostgresCartRepo{db: db}
 }
 
-// Load the cart with its items and menu item details.
-func cartWithItems(tx *gorm.DB, cartID uint) (*models.Cart, error) {
-    var cart models.Cart
-
-    err := tx.Preload("Items.MenuItem").
-        First(&cart, cartID).Error
-
-    if err != nil {
-        return nil, err
-    }
-
-    return &cart, nil
-}
-
-// Remove one item from the customer's cart.
-func (r *PostgresCartRepo) RemoveItem(
-    userID, itemID uint,
+// GetCartByUserID retrieves a customer's shopping cart.
+func (r *PostgresCartRepo) GetCartByUserID(
+	ctx context.Context,
+	userID uint,
 ) (*models.Cart, error) {
 
-    var result *models.Cart
+	// Create a variable to store the cart returned from PostgreSQL.
+	var cart models.Cart
 
-    err := r.db.Transaction(func(tx *gorm.DB) error {
-        var cart models.Cart
+	// Find the cart where user_id matches the customer's ID.
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		First(&cart).Error
 
-        err := tx.Clauses(
-            clause.Locking{Strength: "UPDATE"},
-        ).Where("user_id = ?", userID).
-            First(&cart).Error
+	// Return the error if the cart cannot be retrieved.
+	if err != nil {
+		return nil, err
+	}
 
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            return ErrCartItemNotFound
-        }
-
-        if err != nil {
-            return err
-        }
-
-        deleted := tx.Unscoped().
-            Where("id = ? AND cart_id = ?", itemID, cart.ID).
-            Delete(&models.CartItem{})
-
-        if deleted.Error != nil {
-            return deleted.Error
-        }
-
-        if deleted.RowsAffected == 0 {
-            return ErrCartItemNotFound
-        }
-
-        var count int64
-
-        err = tx.Model(&models.CartItem{}).
-            Where("cart_id = ?", cart.ID).
-            Count(&count).Error
-
-        if err != nil {
-            return err
-        }
-
-        // Reset restaurant when cart becomes empty.
-        if count == 0 {
-            err = tx.Model(&cart).
-                Update("restaurant_id", nil).Error
-
-            if err != nil {
-                return err
-            }
-        }
-
-        result, err = cartWithItems(tx, cart.ID)
-        return err
-    })
-
-    return result, err
+	// Return the cart of the customer.
+	return &cart, nil
 }
 
-// Clear all items from the customer's cart.
-func (r *PostgresCartRepo) Clear(
-    userID uint,
-) (*models.Cart, error) {
+// CreateCart saves a new cart for a customer.
+func (r *PostgresCartRepo) CreateCart(
+	ctx context.Context,
+	cart *models.Cart,
+) error {
 
-    var result *models.Cart
+	// Insert the new cart into PostgreSQL.
+	return r.db.WithContext(ctx).
+		Create(cart).Error
+}
 
-    err := r.db.Transaction(func(tx *gorm.DB) error {
-        var cart models.Cart
+// GetCartItem checks whether a particular menu item is already in the cart.
+func (r *PostgresCartRepo) GetCartItem(
+	ctx context.Context,
+	cartID uint,
+	menuItemID uint,
+) (*models.CartItem, error) {
 
-        err := tx.Clauses(
-            clause.Locking{Strength: "UPDATE"},
-        ).Where("user_id = ?", userID).
-            First(&cart).Error
+	// Create a variable to hold the cart item.
+	var item models.CartItem
 
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            result = &models.Cart{
-                UserID: userID,
-                Items:  []models.CartItem{},
-            }
-            return nil
-        }
+	// Find an item matching both the cart ID and menu item ID.
+	err := r.db.WithContext(ctx).
+		Where("cart_id = ? AND menu_item_id = ?", cartID, menuItemID).
+		First(&item).Error
 
-        if err != nil {
-            return err
-        }
+	// Return an error if the item cannot be retrieved.
+	if err != nil {
+		return nil, err
+	}
 
-        // Remove every cart item.
-        err = tx.Unscoped().
-            Where("cart_id = ?", cart.ID).
-            Delete(&models.CartItem{}).Error
+	// Return the matching cart item.
+	return &item, nil
+}
 
-        if err != nil {
-            return err
-        }
+// CreateCartItem inserts a new menu item into a customer's cart.
+func (r *PostgresCartRepo) CreateCartItem(
+	ctx context.Context,
+	item *models.CartItem,
+) error {
 
-        // Remove restaurant association.
-        err = tx.Model(&cart).
-            Update("restaurant_id", nil).Error
+	// Save the cart item in PostgreSQL.
+	return r.db.WithContext(ctx).
+		Create(item).Error
+}
 
-        if err != nil {
-            return err
-        }
+// UpdateCartItemQuantity updates the quantity of an existing cart item.
+func (r *PostgresCartRepo) UpdateCartItemQuantity(
+	ctx context.Context,
+	itemID uint,
+	quantity int,
+) error {
 
-        result, err = cartWithItems(tx, cart.ID)
-        return err
-    })
+	// Reject quantities below 1.
+	if quantity < 1 {
+		return errors.New("quantity must be at least 1")
+	}
 
-    return result, err
+	// Update the quantity of the cart item with the matching ID.
+	result := r.db.WithContext(ctx).
+		Model(&models.CartItem{}).
+		Where("id = ?", itemID).
+		Update("quantity", quantity)
+
+	// Return any database error.
+	if result.Error != nil {
+		return result.Error
+	}
+
+	// Return an error if no cart item was updated.
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	// Return nil to indicate the update succeeded.
+	return nil
+}
+
+// AddItemForUser locks the customer's cart, records its restaurant, and adds the menu item.
+func (r *PostgresCartRepo) AddItemForUser(
+	ctx context.Context,
+	userID uint,
+	restaurantID uint,
+	menuItemID uint,
+	quantity int,
+	maxQuantity int,
+	price int64,
+) (uint, int, error) {
+	if quantity < 1 || maxQuantity < 1 || quantity > maxQuantity {
+		return 0, 0, ErrQuantityLimit
+	}
+
+	var cartID uint
+	var newQuantity int
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cart, err := lockOrCreateCart(tx, userID, restaurantID)
+		if err != nil {
+			return err
+		}
+		quantityNow, err := upsertCartItem(
+			tx, cart.ID, menuItemID, quantity, maxQuantity, price,
+		)
+		if err != nil {
+			return err
+		}
+		cartID = cart.ID
+		newQuantity = quantityNow
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return cartID, newQuantity, nil
+}
+
+func lockOrCreateCart(tx *gorm.DB, userID, restaurantID uint) (*models.Cart, error) {
+	var cart models.Cart
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ?", userID).
+		First(&cart).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := tx.SavePoint("create_cart").Error; err != nil {
+			return nil, err
+		}
+		cart = models.Cart{UserID: userID, RestaurantID: &restaurantID}
+		if err := tx.Create(&cart).Error; err != nil {
+			if !isUniqueViolation(err) {
+				return nil, err
+			}
+			if err := tx.RollbackTo("create_cart").Error; err != nil {
+				return nil, err
+			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("user_id = ?", userID).
+				First(&cart).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			return &cart, nil
+		}
+	} else if err != nil {
+		return nil, err
+	}
+
+	if cart.RestaurantID == nil {
+		if err := tx.Model(&models.Cart{}).Where("id = ?", cart.ID).Update("restaurant_id", restaurantID).Error; err != nil {
+			return nil, err
+		}
+		cart.RestaurantID = &restaurantID
+		return &cart, nil
+	}
+	if *cart.RestaurantID != restaurantID {
+		return nil, ErrDifferentRestaurant
+	}
+	return &cart, nil
+}
+
+func upsertCartItem(tx *gorm.DB, cartID, menuItemID uint, quantity, maxQuantity int, price int64) (int, error) {
+	var item models.CartItem
+	err := tx.Where("cart_id = ? AND menu_item_id = ?", cartID, menuItemID).First(&item).Error
+	if err == nil {
+		return setCartItemQuantity(tx, &item, item.Quantity, quantity, maxQuantity)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+
+	if err := tx.SavePoint("create_item").Error; err != nil {
+		return 0, err
+	}
+	item = models.CartItem{CartID: cartID, MenuItemID: menuItemID, Quantity: quantity, PriceAtAddition: price}
+	if err := tx.Create(&item).Error; err != nil {
+		if !isUniqueViolation(err) {
+			return 0, err
+		}
+		if err := tx.RollbackTo("create_item").Error; err != nil {
+			return 0, err
+		}
+		if err := tx.Where("cart_id = ? AND menu_item_id = ?", cartID, menuItemID).First(&item).Error; err != nil {
+			return 0, err
+		}
+		return setCartItemQuantity(tx, &item, item.Quantity, quantity, maxQuantity)
+	}
+	return quantity, nil
+}
+
+func setCartItemQuantity(tx *gorm.DB, item *models.CartItem, current, add, maxQuantity int) (int, error) {
+	if add < 1 || current > maxQuantity-add {
+		return 0, ErrQuantityLimit
+	}
+	updated := current + add
+	if err := tx.Model(item).Update("quantity", updated).Error; err != nil {
+		return 0, err
+	}
+	return updated, nil
+}
+
+// GetCartWithItems finds a customer's cart, including its items and their menu details.
+func (r *PostgresCartRepo) GetCartWithItems(ctx context.Context, userID uint) (*models.Cart, error) {
+	var cart models.Cart
+	err := r.db.WithContext(ctx).
+		Preload("Items", func(db *gorm.DB) *gorm.DB {
+			return db.Order("id ASC")
+		}).
+		Preload("Items.MenuItem").
+		Where("user_id = ?", userID).
+		First(&cart).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cart, nil
+}
+
+// SetItemQuantity replaces a cart item's quantity when the item belongs to the given cart.
+func (r *PostgresCartRepo) SetItemQuantity(ctx context.Context, cartID, cartItemID uint, quantity int) error {
+	if quantity < 1 {
+		return ErrQuantityLimit
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.CartItem{}).
+		Where("id = ? AND cart_id = ?", cartItemID, cartID).
+		Update("quantity", quantity)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// RemoveItem deletes one line. The restaurant is cleared when that was the last line.
+func (r *PostgresCartRepo) RemoveItem(ctx context.Context, userID, itemID uint) (*models.Cart, error) {
+	var result *models.Cart
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cart models.Cart
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", userID).
+			First(&cart).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return gorm.ErrRecordNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		deleted := tx.Unscoped().Where("id = ? AND cart_id = ?", itemID, cart.ID).Delete(&models.CartItem{})
+		if deleted.Error != nil {
+			return deleted.Error
+		}
+		if deleted.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		var count int64
+		if err := tx.Model(&models.CartItem{}).Where("cart_id = ?", cart.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			if err := clearCartRestaurant(tx, cart.ID); err != nil {
+				return err
+			}
+		}
+		result, err = loadCartWithItems(tx, cart.ID)
+		return err
+	})
+	return result, err
+}
+
+// Clear removes every line and clears the cart restaurant.
+func (r *PostgresCartRepo) Clear(ctx context.Context, userID uint) (*models.Cart, error) {
+	var result *models.Cart
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cart models.Cart
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", userID).
+			First(&cart).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			result = &models.Cart{UserID: userID, Items: []models.CartItem{}}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("cart_id = ?", cart.ID).Delete(&models.CartItem{}).Error; err != nil {
+			return err
+		}
+		if err := clearCartRestaurant(tx, cart.ID); err != nil {
+			return err
+		}
+		result, err = loadCartWithItems(tx, cart.ID)
+		return err
+	})
+	return result, err
+}
+
+func clearCartRestaurant(tx *gorm.DB, cartID uint) error {
+	return tx.Exec(
+		"UPDATE carts SET restaurant_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+		cartID,
+	).Error
+}
+
+func loadCartWithItems(tx *gorm.DB, cartID uint) (*models.Cart, error) {
+	var cart models.Cart
+	err := tx.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("id ASC")
+	}).Preload("Items.MenuItem").First(&cart, cartID).Error
+	if err != nil {
+		return nil, err
+	}
+	if cart.Items == nil {
+		cart.Items = []models.CartItem{}
+	}
+	return &cart, nil
+}
+
+func isUniqueViolation(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

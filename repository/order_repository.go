@@ -1,37 +1,46 @@
 package repository
 
-
 import (
-    "errors"
-    "fmt"
-    "math"
-    "time"
+	"context"
+	"errors"
 
-    "Fhub/models"
+	"Fhub/models"
 
-    "gorm.io/gorm"
-    "gorm.io/gorm/clause"
+	"gorm.io/gorm"
 )
 
+var ErrEmptyCart = errors.New("cannot checkout with an empty cart")
+var ErrUnavailableItem = errors.New("cart contains an unavailable item")
 
-var ErrEmptyCart = errors.New("cart is empty")
-var ErrUnavailableItem = errors.New("a cart item is unavailable")
-
-type DeliverySnapshot struct {
-    Name         string `json:"delivery_name"`
-    Phone        string `json:"delivery_phone"`
-    Address      string `json:"delivery_address"`
-    City         string `json:"delivery_city"`
-    State        string `json:"delivery_state"`
-    Instructions string `json:"delivery_instructions"`
-}
-
+// DeliveryFee is a fixed checkout fee of 2000.00 in minor units.
+const DeliveryFee int64 = 200000
 
 // Checkout must create the order, create its items and clear the cart inside one
 // r.db.Transaction(func(tx *gorm.DB) error { ... }) call.
-type OrderRepository interface { Checkout(uint, DeliverySnapshot) (*models.Order, error)
-List(uint) ([]models.Order, error)
-Get(uint, uint) (*models.Order, error)
+// OrderRepository defines the database operations for orders.
+type OrderRepository interface {
+
+	// IsRestaurantActive checks if a restaurant is active and returns a boolean or an error.
+	IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error)
+	GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error)
+
+	// GetRestaurantOrders retrieves one page of a restaurant's orders and optionally filters them by status.
+	GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error)
+
+	GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error)
+	ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error)
+
+	// FindOrderForCancel gets an order and its restaurant, so we can check who is allowed to cancel it.
+	FindOrderForCancel(ctx context.Context, orderID uint) (*models.Order, error)
+
+	// CancelOrder sets an order's status to cancelled, but only if it is still in one of the allowed statuses.
+	CancelOrder(ctx context.Context, orderID uint, allowed []models.OrderStatus) error
+
+	// GetOrderForRestaurant gets one order that belongs to the restaurant.
+	GetOrderForRestaurant(ctx context.Context, orderID, restaurantID uint) (*models.Order, error)
+
+	// UpdateOrderStatus sets the status only when it is still currentStatus.
+	UpdateOrderStatus(ctx context.Context, orderID, restaurantID uint, currentStatus, newStatus models.OrderStatus) error
 }
 
 type PostgresOrderRepo struct {
@@ -42,159 +51,198 @@ func NewOrderRepository(db *gorm.DB) OrderRepository {
 	return &PostgresOrderRepo{db: db}
 }
 
+func (r *PostgresOrderRepo) IsRestaurantActive(ctx context.Context, restaurantID uint) (bool, error) {
+	var restaurant models.Restaurant
 
-func (r *PostgresOrderRepo) Checkout(
-    customerID uint,
-    d DeliverySnapshot,
-) (*models.Order, error) {
+	err := r.db.WithContext(ctx).Select("status").First(&restaurant, restaurantID).Error
+	if err != nil {
+		return false, err
+	}
 
-    var order models.Order
-
-    err := r.db.Transaction(func(tx *gorm.DB) error {
-        var cart models.Cart
-
-        if err := tx.Clauses(
-            clause.Locking{Strength: "UPDATE"},
-        ).Where("user_id = ?", customerID).
-            First(&cart).Error; err != nil {
-            if errors.Is(err, gorm.ErrRecordNotFound) {
-                return ErrEmptyCart
-            }
-            return err
-        }
-
-        var cartItems []models.CartItem
-
-        if err := tx.Where("cart_id = ?", cart.ID).
-            Find(&cartItems).Error; err != nil {
-            return err
-        }
-
-        if len(cartItems) == 0 || cart.RestaurantID == nil {
-            return ErrEmptyCart
-        }
-
-        order = models.Order{
-            CustomerID: customerID,
-            RestaurantID: *cart.RestaurantID,
-            Status: models.OrderStatusPending,
-
-            DeliveryName: d.Name,
-            DeliveryPhone: d.Phone,
-            DeliveryAddress: d.Address,
-            DeliveryCity: d.City,
-            DeliveryState: d.State,
-            DeliveryInstructions: d.Instructions,
-
-            OrderNumber: fmt.Sprintf(
-                "ORD-%s-%d",
-                time.Now().UTC().Format("20060102"),
-                time.Now().UTC().UnixNano(),
-            ),
-        }
-
-        for _, ci := range cartItems {
-            if ci.Quantity <= 0 {
-                return errors.New("invalid quantity")
-            }
-
-            var menu models.MenuItem
-
-            err := tx.Clauses(
-                clause.Locking{Strength: "SHARE"},
-            ).First(&menu, ci.MenuItemID).Error
-
-            if errors.Is(err, gorm.ErrRecordNotFound) {
-                return ErrUnavailableItem
-            }
-            if err != nil {
-                return err
-            }
-
-            if !menu.Available ||
-                menu.RestaurantID != *cart.RestaurantID {
-                return ErrUnavailableItem
-            }
-
-            if menu.Price < 0 ||
-                (menu.Price > 0 &&
-                    int64(ci.Quantity) > math.MaxInt64/menu.Price) {
-                return errors.New("invalid item price")
-            }
-
-            lineTotal := menu.Price * int64(ci.Quantity)
-
-            if order.Subtotal > math.MaxInt64-lineTotal {
-                return errors.New("order total overflow")
-            }
-
-            menuID := menu.ID
-
-            order.Items = append(order.Items, models.OrderItem{
-                MenuItemID: &menuID,
-                Name: menu.Name,
-                UnitPrice: menu.Price,
-                Quantity: ci.Quantity,
-                LineTotal: lineTotal,
-            })
-
-            order.Subtotal += lineTotal
-        }
-
-        order.DeliveryFee = 0
-        order.Total = order.Subtotal + order.DeliveryFee
-
-        if err := tx.Create(&order).Error; err != nil {
-            return err
-        }
-
-        if err := tx.Where("cart_id = ?", cart.ID).
-            Delete(&models.CartItem{}).Error; err != nil {
-            return err
-        }
-
-        return tx.Model(&models.Cart{}).
-            Where("id = ?", cart.ID).
-            Update("restaurant_id", nil).Error
-    })
-
-    if err != nil {
-        return nil, err
-    }
-
-    return &order, nil
+	return restaurant.Status == models.RestaurantStatusActive, nil
 }
 
+// Loads all items associated with the order so the customer can view their order details.
+func (r *PostgresOrderRepo) GetOrderByID(ctx context.Context, orderID uint, customerID uint) (*models.Order, error) {
+	var order models.Order
 
-func (r *PostgresOrderRepo) List(
-    customerID uint,
-) ([]models.Order, error) {
-    var orders []models.Order
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Preload("Restaurant").
+		Where("id = ? AND customer_id = ?", orderID, customerID).
+		First(&order).Error
+	if err != nil {
+		return nil, err
+	}
 
-    err := r.db.Where("customer_id = ?", customerID).
-        Preload("Items").
-        Order("created_at DESC").
-        Find(&orders).Error
-
-    return orders, err
+	return &order, nil
 }
 
-func (r *PostgresOrderRepo) Get(
-    customerID uint,
-    orderID uint,
-) (*models.Order, error) {
-    var order models.Order
+// GetRestaurantOrders retrieves one page of orders belonging to a specific restaurant.
+// If no status is provided, orders of every status are included.
+func (r *PostgresOrderRepo) GetRestaurantOrders(ctx context.Context, restaurantID uint, status string, limit, offset int) ([]models.Order, int64, error) {
+	var total int64
+	if err := r.restaurantOrdersQuery(ctx, restaurantID, status).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 
-    err := r.db.Where(
-        "customer_id = ? AND id = ?",
-        customerID,
-        orderID,
-    ).Preload("Items").First(&order).Error
-
-    if err != nil {
-        return nil, err
-    }
-
-    return &order, nil
+	var orders []models.Order
+	err := r.restaurantOrdersQuery(ctx, restaurantID, status).
+		Preload("Items").
+		Preload("Customer").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&orders).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
 }
 
+func (r *PostgresOrderRepo) restaurantOrdersQuery(ctx context.Context, restaurantID uint, status string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.Order{}).Where("restaurant_id = ?", restaurantID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
+}
+
+func (r *PostgresOrderRepo) GetCheckoutSummary(ctx context.Context, customerID uint) (*models.CheckoutSummary, error) {
+	var cart models.Cart
+
+	err := r.db.WithContext(ctx).
+		Preload("Restaurant").
+		Preload("Items.MenuItem").
+		Where("user_id = ?", customerID).
+		First(&cart).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrEmptyCart
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cart.Items) == 0 || cart.RestaurantID == nil {
+		return nil, ErrEmptyCart
+	}
+
+	if cart.Restaurant == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	summary := &models.CheckoutSummary{
+		RestaurantID:   cart.Restaurant.ID,
+		RestaurantName: cart.Restaurant.Name,
+		Items:          make([]models.CheckoutItem, 0, len(cart.Items)),
+		DeliveryFee:    DeliveryFee,
+	}
+	for _, item := range cart.Items {
+		if item.Quantity <= 0 ||
+			item.MenuItem.ID == 0 ||
+			!item.MenuItem.Available ||
+			item.MenuItem.RestaurantID != cart.Restaurant.ID {
+			return nil, ErrUnavailableItem
+		}
+
+		lineTotal := item.MenuItem.Price * int64(item.Quantity)
+
+		summary.Items = append(summary.Items, models.CheckoutItem{
+			MenuItemID: item.MenuItemID,
+			Name:       item.MenuItem.Name,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.MenuItem.Price,
+			LineTotal:  lineTotal,
+		})
+
+		summary.Subtotal += lineTotal
+	}
+
+	summary.Total = summary.Subtotal + summary.DeliveryFee
+
+	return summary, nil
+}
+
+func (r *PostgresOrderRepo) ListForCustomer(ctx context.Context, customerID uint, status string, limit, offset int) ([]models.Order, int64, error) {
+	var total int64
+	if err := r.customerOrdersQuery(ctx, customerID, status).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var orders []models.Order
+	err := r.customerOrdersQuery(ctx, customerID, status).
+		Preload("Items").
+		Preload("Restaurant").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&orders).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+func (r *PostgresOrderRepo) customerOrdersQuery(ctx context.Context, customerID uint, status string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.Order{}).Where("customer_id = ?", customerID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
+}
+
+// FindOrderForCancel gets an order by its ID, including its restaurant.
+// The restaurant is needed to check whether a manager owns it.
+func (r *PostgresOrderRepo) FindOrderForCancel(ctx context.Context, orderID uint) (*models.Order, error) {
+	var order models.Order
+	err := r.db.WithContext(ctx).
+		Preload("Restaurant").
+		First(&order, orderID).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &order, nil
+}
+
+func (r *PostgresOrderRepo) CancelOrder(ctx context.Context, orderID uint, allowed []models.OrderStatus) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("id = ? AND status IN ?", orderID, allowed).
+		Update("status", models.OrderStatusCancelled)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+func (r *PostgresOrderRepo) GetOrderForRestaurant(ctx context.Context, orderID, restaurantID uint) (*models.Order, error) {
+	var order models.Order
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (r *PostgresOrderRepo) UpdateOrderStatus(ctx context.Context, orderID, restaurantID uint, currentStatus, newStatus models.OrderStatus) error {
+	result := r.db.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("id = ? AND restaurant_id = ? AND status = ?", orderID, restaurantID, currentStatus).
+		Update("status", newStatus)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}

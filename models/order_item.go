@@ -3,14 +3,14 @@ package models
 import "gorm.io/gorm"
 
 // Name and UnitPrice are snapshots taken at checkout so later menu edits never change past orders.
+// MenuItemID is optional so deleting the menu row can clear the link without deleting the order line.
 type OrderItem struct {
 	gorm.Model
-	OrderID    uint     `gorm:"not null;index" json:"order_id"`
-    MenuItemID *uint `gorm:"index" json:"menu_item_id"`
-    MenuItem *MenuItem `gorm:"foreignKey:MenuItemID;constraint:OnDelete:SET NULL;" json:"-"`
-
-	Name       string   `gorm:"not null" json:"name"`
-	UnitPrice  int64    `gorm:"not null" json:"unit_price"`
-	Quantity   int      `gorm:"not null;check:quantity > 0" json:"quantity"`
-	LineTotal  int64    `gorm:"not null" json:"line_total"`
+	OrderID    uint      `gorm:"not null;index" json:"order_id"`
+	MenuItemID *uint     `gorm:"index" json:"menu_item_id"`
+	MenuItem   *MenuItem `gorm:"foreignKey:MenuItemID;constraint:OnDelete:SET NULL" json:"-"`
+	Name       string    `gorm:"not null" json:"name"`
+	UnitPrice  int64     `gorm:"not null" json:"unit_price"`
+	Quantity   int       `gorm:"not null;check:quantity > 0" json:"quantity"`
+	LineTotal  int64     `gorm:"not null" json:"line_total"`
 }

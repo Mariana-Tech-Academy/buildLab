@@ -37,3 +37,20 @@ type Order struct {
 
 	Items []OrderItem `json:"items"`
 }
+
+type CheckoutItem struct {
+	MenuItemID uint   `json:"menu_item_id"`
+	Name       string `json:"name"`
+	Quantity   int    `json:"quantity"`
+	UnitPrice  int64  `json:"unit_price"`
+	LineTotal  int64  `json:"line_total"`
+}
+
+type CheckoutSummary struct {
+	RestaurantID   uint           `json:"restaurant_id"`
+	RestaurantName string         `json:"restaurant_name"`
+	Items          []CheckoutItem `json:"items"`
+	Subtotal       int64          `json:"subtotal"`
+	DeliveryFee    int64          `json:"delivery_fee"`
+	Total          int64          `json:"total"`
+}

@@ -1,218 +1,365 @@
 package handlers
 
 import (
-    "encoding/json"
-    "errors"
-    "io"
-    "net/http"
-    "strconv"
-    "strings"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
-    "Fhub/auth"
-    "Fhub/models"
-    "Fhub/repository"
-    "Fhub/service"
-    "Fhub/utils"
+	"Fhub/auth"
+	"Fhub/models"
+	"Fhub/service"
+	"Fhub/utils"
 
-    "github.com/gorilla/mux"
+	"github.com/gorilla/mux"
 )
-
 
 type MenuHandler struct {
 	MenuService service.MenuService
 }
 
-func NewMenuHandler(service service.MenuService) *MenuHandler {
-	return &MenuHandler{MenuService: service}
-
-}
- 
-func menuID(r *http.Request, key string) (uint, error) {
-    n, err := strconv.ParseUint(mux.Vars(r)[key], 10, 32)
-    return uint(n), err
+// NewMenuHandler creates a handler connected to the menu service.
+func NewMenuHandler(menuService service.MenuService) *MenuHandler {
+	return &MenuHandler{MenuService: menuService}
 }
 
-func menuError(w http.ResponseWriter, err error) {
-    switch {
-    case errors.Is(err, repository.ErrMenuItemNotFound):
-        utils.Error(w, 404, err.Error())
-    case errors.Is(err, repository.ErrMenuItemUnavailable):
-        utils.Error(w, 409, err.Error())
-    case errors.Is(err, repository.ErrMenuItemForbidden):
-        utils.Error(w, 403, err.Error())
-    default:
-        utils.Error(w, 500, "database error")
-    }
+type menuItemResponse struct {
+	ID           uint      `json:"id"`
+	RestaurantID uint      `json:"restaurant_id"`
+	CategoryID   uint      `json:"category_id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	Price        int64     `json:"price"`
+	ImageURL     string    `json:"image_url"`
+	Available    bool      `json:"available"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-func (h *MenuHandler) Get(w http.ResponseWriter, r *http.Request) {
-    id, err := menuID(r, "id")
-    if err != nil || id == 0 {
-        utils.Error(w, 400, "invalid menu item id")
-        return
-    }
-
-    item, err := h.MenuService.Get(id)
-    if err != nil {
-        menuError(w, err)
-        return
-    }
-
-    utils.Success(w, 200, "menu item", item)
+func newMenuItemResponse(item *models.MenuItem) menuItemResponse {
+	return menuItemResponse{
+		ID:           item.ID,
+		RestaurantID: item.RestaurantID,
+		CategoryID:   item.CategoryID,
+		Name:         item.Name,
+		Description:  item.Description,
+		Price:        item.Price,
+		ImageURL:     item.ImageURL,
+		Available:    item.Available,
+		CreatedAt:    item.CreatedAt,
+		UpdatedAt:    item.UpdatedAt,
+	}
 }
 
-func (h *MenuHandler) List(w http.ResponseWriter, r *http.Request) {
-    id, err := menuID(r, "id")
-    if err != nil || id == 0 {
-        utils.Error(w, 400, "invalid restaurant id")
-        return
-    }
+// CreateMenuItem receives a request to create a new menu item.
+// Price in the JSON body is minor units (pence or kobo): 500 is 5.00, not 500 pounds.
+func (h *MenuHandler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
-    items, err := h.MenuService.List(id)
-    if err != nil {
-        menuError(w, err)
-        return
-    }
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
-    utils.Success(w, 200, "restaurant menu", items)
+	var input service.CreateMenuItemInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	item, err := h.MenuService.CreateMenuItem(r.Context(), claims.UserID, claims.Role, input)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusCreated, "menu item created", newMenuItemResponse(item))
 }
 
+// GetMenuItemByID handles GET /api/menu/{id}.
+func (h *MenuHandler) GetMenuItemByID(w http.ResponseWriter, r *http.Request) {
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	item, err := h.MenuService.GetMenuItemByID(r.Context(), itemID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "menu item retrieved successfully", newMenuItemResponse(item))
+}
+
+// UpdateMenuItem handles PUT /api/menu/{id}.
+func (h *MenuHandler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var input service.UpdateMenuItemInput
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid update JSON")
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		utils.Error(w, http.StatusBadRequest, "request must contain one JSON object")
+		return
+	}
+
+	item, err := h.MenuService.UpdateMenuItem(r.Context(), itemID, claims.UserID, claims.Role, input)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "menu item updated", newMenuItemResponse(item))
+}
+
+// SetAvailability handles PATCH /api/menu/{id}/availability.
 func (h *MenuHandler) SetAvailability(w http.ResponseWriter, r *http.Request) {
-    id, err := menuID(r, "id")
-    if err != nil || id == 0 {
-        utils.Error(w, 400, "invalid menu item id")
-        return
-    }
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
 
-    claims, err := auth.ClaimsFromContext(r.Context())
-    if err != nil {
-        utils.Error(w, 401, "unauthenticated")
-        return
-    }
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
 
-    var req struct {
-        Available *bool `json:"available"`
-    }
+	var req struct {
+		Available *bool `json:"available"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || req.Available == nil {
+		utils.Error(w, http.StatusBadRequest, "provide available as true or false")
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		utils.Error(w, http.StatusBadRequest, "request must contain one JSON object")
+		return
+	}
 
-    dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
-    dec.DisallowUnknownFields()
-
-    if err := dec.Decode(&req); err != nil || req.Available == nil {
-        utils.Error(w, 400, "provide available as true or false")
-        return
-    }
-
-    var extra any
-    if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-        utils.Error(w, 400, "request must contain one JSON object")
-        return
-    }
-
-    item, err := h.MenuService.SetAvailability(
-        id,
-        claims.UserID,
-        claims.Role == models.RoleAdmin,
-        *req.Available,
-    )
-
-    if err != nil {
-        menuError(w, err)
-        return
-    }
-
-    utils.Success(w, 200, "menu item availability updated", item)
+	item, err := h.MenuService.SetAvailability(r.Context(), itemID, claims.UserID, claims.Role, *req.Available)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+	utils.Success(w, http.StatusOK, "menu item availability updated", newMenuItemResponse(item))
 }
 
+// DeleteMenuItem handles DELETE /api/menu/{id}.
+func (h *MenuHandler) DeleteMenuItem(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
 
+	itemID, err := parseMenuItemID(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid menu item ID")
+		return
+	}
+
+	if err := h.MenuService.DeleteMenuItem(r.Context(), itemID, claims.UserID, claims.Role); err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "menu item deleted", nil)
+}
+
+func parseMenuItemID(r *http.Request) (uint, error) {
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, strconv.IntSize)
+	if err != nil {
+		return 0, err
+	}
+	if id == 0 {
+		return 0, errors.New("menu item ID must be greater than zero")
+	}
+	return uint(id), nil
+}
+
+func writeMenuError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidMenuItemInput):
+		utils.Error(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, service.ErrMenuItemNotFound):
+		utils.Error(w, http.StatusNotFound, "menu item not found")
+	case errors.Is(err, service.ErrRestaurantNotFound):
+		utils.Error(w, http.StatusNotFound, "restaurant not found")
+	case errors.Is(err, service.ErrCategoryNotFound):
+		utils.Error(w, http.StatusNotFound, "category not found")
+	case errors.Is(err, service.ErrRestaurantForbidden):
+		utils.Error(w, http.StatusForbidden, "you do not have permission to modify this restaurant")
+	default:
+		log.Printf("menu handler: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+	}
+}
+
+func (h *MenuHandler) GetRestaurantMenu(w http.ResponseWriter, r *http.Request) {
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+
+	var categoryID *uint
+	if value := r.URL.Query().Get("category_id"); value != "" {
+		parsedID, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || parsedID == 0 {
+			utils.Error(w, http.StatusBadRequest, "invalid category ID")
+			return
+		}
+		id := uint(parsedID)
+		categoryID = &id
+	}
+
+	items, err := h.MenuService.ListRestaurantMenu(r.Context(), uint(restaurantID), categoryID)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
+
+	responses := make([]menuItemResponse, 0, len(items))
+	for i := range items {
+		responses = append(responses, newMenuItemResponse(&items[i]))
+	}
+	utils.Success(w, http.StatusOK, "menu retrieved successfully", responses)
+}
+
+// Search handles GET /api/menu/search.
+// Price filters are minor units: 500 means 5.00.
 func (h *MenuHandler) Search(w http.ResponseWriter, r *http.Request) {
-    params := r.URL.Query()
+	input, message := menuSearchInput(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
 
-    filters := repository.MenuSearchFilters{
-        Name: strings.TrimSpace(params.Get("name")),
-    }
+	result, err := h.MenuService.Search(r.Context(), input)
+	if err != nil {
+		writeMenuError(w, err)
+		return
+	}
 
-    // Filter by category
-    if params.Has("category_id") {
-        id, err := strconv.ParseUint(params.Get("category_id"), 10, 32)
-        if err != nil || id == 0 {
-            http.Error(w, "Invalid category_id", http.StatusBadRequest)
-            return
-        }
+	items := make([]menuItemResponse, 0, len(result.Items))
+	for i := range result.Items {
+		items = append(items, newMenuItemResponse(&result.Items[i]))
+	}
+	message = "menu items retrieved successfully"
+	if result.Total == 0 {
+		message = "No menu items found. Try another name or filter."
+	}
+	utils.Success(w, http.StatusOK, message, menuSearchResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
 
-        categoryID := uint(id)
-        filters.CategoryID = &categoryID
-    }
+type menuSearchResponse struct {
+	Items []menuItemResponse `json:"items"`
+	Page  int                `json:"page"`
+	Limit int                `json:"limit"`
+	Total int64              `json:"total"`
+}
 
-    // Filter by restaurant
-    if params.Has("restaurant_id") {
-        id, err := strconv.ParseUint(params.Get("restaurant_id"), 10, 32)
-        if err != nil || id == 0 {
-            http.Error(w, "Invalid restaurant_id", http.StatusBadRequest)
-            return
-        }
+func menuSearchInput(r *http.Request) (service.MenuSearchInput, string) {
+	params := r.URL.Query()
+	input := service.MenuSearchInput{Name: strings.TrimSpace(params.Get("name"))}
 
-        restaurantID := uint(id)
-        filters.RestaurantID = &restaurantID
-    }
+	page, ok := parseMenuQueryInt(params.Get("page"))
+	if !ok {
+		return input, "page must be a positive whole number"
+	}
+	limit, ok := parseMenuQueryInt(params.Get("limit"))
+	if !ok {
+		return input, "limit must be a positive whole number"
+	}
+	if limit > 50 {
+		return input, "limit must be between 1 and 50"
+	}
+	input.Page = page
+	input.Limit = limit
 
-    // Minimum price
-    if params.Has("min_price") {
-        price, err := strconv.ParseInt(params.Get("min_price"), 10, 64)
-        if err != nil || price < 0 {
-            http.Error(w, "Invalid min_price", http.StatusBadRequest)
-            return
-        }
+	if params.Has("category_id") {
+		id, err := strconv.ParseUint(params.Get("category_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid category ID"
+		}
+		categoryID := uint(id)
+		input.CategoryID = &categoryID
+	}
+	if params.Has("restaurant_id") {
+		id, err := strconv.ParseUint(params.Get("restaurant_id"), 10, 64)
+		if err != nil || id == 0 {
+			return input, "invalid restaurant ID"
+		}
+		restaurantID := uint(id)
+		input.RestaurantID = &restaurantID
+	}
+	if params.Has("min_price") {
+		price, err := strconv.ParseInt(params.Get("min_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid min_price"
+		}
+		input.MinPrice = &price
+	}
+	if params.Has("max_price") {
+		price, err := strconv.ParseInt(params.Get("max_price"), 10, 64)
+		if err != nil || price < 0 {
+			return input, "invalid max_price"
+		}
+		input.MaxPrice = &price
+	}
+	if input.MinPrice != nil && input.MaxPrice != nil && *input.MinPrice > *input.MaxPrice {
+		return input, "min_price cannot exceed max_price"
+	}
+	if params.Has("available") {
+		raw := params.Get("available")
+		if raw != "true" && raw != "false" {
+			return input, "available must be true or false"
+		}
+		available := raw == "true"
+		input.Available = &available
+	}
+	return input, ""
+}
 
-        filters.MinPrice = &price
-    }
-
-    // Maximum price
-    if params.Has("max_price") {
-        price, err := strconv.ParseInt(params.Get("max_price"), 10, 64)
-        if err != nil || price < 0 {
-            http.Error(w, "Invalid max_price", http.StatusBadRequest)
-            return
-        }
-
-        filters.MaxPrice = &price
-    }
-
-    // Check price range
-    if filters.MinPrice != nil && filters.MaxPrice != nil {
-        if *filters.MinPrice > *filters.MaxPrice {
-            http.Error(w, "Minimum price cannot exceed maximum price", http.StatusBadRequest)
-            return
-        }
-    }
-
-    // Filter by availability
-    if params.Has("available") {
-        raw := params.Get("available")
-
-        if raw != "true" && raw != "false" {
-            http.Error(w, "Available must be true or false", http.StatusBadRequest)
-            return
-        }
-
-        available, _ := strconv.ParseBool(raw)
-        filters.Available = &available
-    }
-
-    // Call service to search database
-    items, err := h.MenuService.Search(filters)
-
-    if err != nil {
-        http.Error(w, "Failed to search menu items", http.StatusInternalServerError)
-        return
-    }
-
-    // Return JSON response
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusOK)
-
-    if items == nil {
-        items = []models.MenuItem{}
-    }
-
-    json.NewEncoder(w).Encode(items)
+func parseMenuQueryInt(value string) (int, bool) {
+	if value == "" {
+		return 0, true
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
 }

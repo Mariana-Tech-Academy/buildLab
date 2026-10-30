@@ -4,6 +4,7 @@ import "gorm.io/gorm"
 
 type Category struct {
 	gorm.Model
-	Name      string     `gorm:"uniqueIndex;not null" json:"name"`
-	MenuItems []MenuItem `json:"menu_items,omitempty"`
+	RestaurantID uint       `gorm:"not null;uniqueIndex:idx_restaurant_category_lower" json:"restaurant_id"`
+	Name         string     `gorm:"not null;uniqueIndex:idx_restaurant_category_lower,expression:LOWER(name)" json:"name"`
+	MenuItems    []MenuItem `json:"menu_items,omitempty"`
 }

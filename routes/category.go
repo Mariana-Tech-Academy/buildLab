@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"Fhub/auth"
 	"Fhub/handlers"
 	"Fhub/middleware"
@@ -12,16 +14,46 @@ import (
 	"gorm.io/gorm"
 )
 
-func CategoryRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, blacklist *middleware.TokenBlacklist) {
-	repo := repository.NewCategoryRepository(db)
-	categoryService := service.NewCategoryService(repo)
+func CategoryRoutes(
+	router *mux.Router,
+	db *gorm.DB,
+	tokens *auth.JWTManager,
+	blacklist *middleware.TokenBlacklist,
+) {
+	// Initialise repositories
+	categoryRepo := repository.NewCategoryRepository(db)
+	restaurantRepo := repository.NewRestaurantRepository(db)
+
+	// Initialise services
+	restaurantService := service.NewRestaurantService(restaurantRepo)
+
+	categoryService := service.NewCategoryService(
+		categoryRepo,
+		restaurantService,
+	)
+
+	// Initialise handler
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
 
-	// public routes: GET /categories
+	// Public route: customers can view categories
+	router.HandleFunc(
+		"/restaurants/{restaurantId}/categories",
+		categoryHandler.GetCategories,
+	).Methods(http.MethodGet)
 
-	// admin routes: POST /categories, PUT /categories/{id}, DELETE /categories/{id}
-	admin := protected(router, tokens, blacklist)
-	admin.Use(middleware.RequireRole(models.RoleAdmin))
+	// Protected routes: managers and admins
+	manager := protected(router, tokens, blacklist)
+	manager.Use(middleware.RequireRole(
+		models.RoleManager,
+		models.RoleAdmin,
+	))
 
-	_, _ = categoryHandler, admin
+	// Create a category
+	manager.HandleFunc(
+		"/restaurants/{restaurantId}/categories",
+		categoryHandler.CreateCategory,
+	).Methods(http.MethodPost)
+
+	// Update and delete routes will be added
+	// when their handler methods are implemented.
 }
