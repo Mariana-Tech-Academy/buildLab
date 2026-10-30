@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"Fhub/auth"
 	"Fhub/models"
@@ -87,82 +86,192 @@ func (h *AdminHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request
 	utils.Success(w, http.StatusOK, "role updated successfully", newUserResponse(user))
 }
 
-// Gets a list of users and allows searching by name or email.
-// This uses pagination to control how many users are shown.
+type adminUsersResponse struct {
+	Items []UserResponse `json:"items"`
+	Page  int            `json:"page"`
+	Limit int            `json:"limit"`
+	Total int64          `json:"total"`
+}
+
+// ListUsers handles GET /api/admin/users (ADM-02).
+// Optional query parameters: search (first name, last name, or email), page and limit.
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-
-	// Gets the search term from the URL.
-	search := strings.TrimSpace(r.URL.Query().Get("search"))
-
-	page := 1
-	limit := 10
-
-	// This checks if a page number has been provided.
-	if value := r.URL.Query().Get("page"); value != "" {
-		number, err := strconv.Atoi(value)
-		if err != nil || number < 1 {
-			utils.Error(w, http.StatusBadRequest, "invalid page number")
-			return
-		}
-		page = number
-	}
-	// This checks if a limit has been provided.
-	if value := r.URL.Query().Get("limit"); value != "" {
-		number, err := strconv.Atoi(value)
-		if err != nil || number < 1 || number > 50 {
-			utils.Error(w, http.StatusBadRequest, "limit must be between 1 and 50")
-			return
-		}
-		limit = number
-	}
-	// Gets the matching users from the service.
-	result, err := h.AdminService.ListUsers(r.Context(), search, page, limit)
-	if err != nil {
-		if errors.Is(err, service.ErrValidation) {
-			utils.Error(w, http.StatusBadRequest, "invalid pagination")
-			return
-		}
-
-		log.Printf("list users: %v", err)
-		utils.Error(w, http.StatusInternalServerError, "could not retrieve users")
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
 		return
 	}
-	// Converts the users into responses without password information.
-	users := make([]UserResponse, 0, len(result.Users))
-	for i := range result.Users {
-		users = append(users, newUserResponse(&result.Users[i]))
+
+	result, err := h.AdminService.ListUsers(r.Context(), r.URL.Query().Get("search"), page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidOrderPage) {
+			utils.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("list users: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
-	// Returns the users and pagination information.
-	utils.Success(w, http.StatusOK, "users retrieved successfully", map[string]interface{}{
-		"users": users,
-		"page":  result.Page,
-		"limit": result.Limit,
-		"total": result.Total,
+
+	items := make([]UserResponse, 0, len(result.Users))
+	for i := range result.Users {
+		items = append(items, newUserResponse(&result.Users[i]))
+	}
+	utils.Success(w, http.StatusOK, "users retrieved successfully", adminUsersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
 	})
 }
 
-// Gets the details of a user using their ID. The password information is not included in the response.
+// GetUserDetails handles GET /api/admin/users/{id} (ADM-02).
 func (h *AdminHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
-
-	// Gets the user ID from the URL.
 	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
-	if err != nil || id == 0 || id > uint64(^uint(0)) {
+	if err != nil || id == 0 {
 		utils.Error(w, http.StatusBadRequest, "invalid user ID")
 		return
 	}
 
-	// Gets the user details from the service.
 	user, err := h.AdminService.GetUserDetails(r.Context(), uint(id))
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			utils.Error(w, http.StatusNotFound, "user not found")
 			return
 		}
-
 		log.Printf("get user details: %v", err)
-		utils.Error(w, http.StatusInternalServerError, "could not retrieve user")
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	// Returns the user details without password information.
 	utils.Success(w, http.StatusOK, "user retrieved successfully", newUserResponse(user))
+}
+
+// adminOrderResponse is one order as seen by an admin.
+// It reuses the restaurant manager's order response (customer, items, totals and delivery details)
+// and adds the customer's email and the restaurant.
+type adminOrderResponse struct {
+	restaurantOrderResponse
+	CustomerEmail  string `json:"customer_email"`
+	RestaurantID   uint   `json:"restaurant_id"`
+	RestaurantName string `json:"restaurant_name"`
+}
+
+// newAdminOrderResponse builds the admin's view of an order.
+func newAdminOrderResponse(order models.Order) adminOrderResponse {
+	return adminOrderResponse{
+		restaurantOrderResponse: newRestaurantOrderResponse(order),
+		CustomerEmail:           order.Customer.Email,
+		RestaurantID:            order.RestaurantID,
+		RestaurantName:          order.Restaurant.Name,
+	}
+}
+
+// adminOrdersResponse is one page of orders for the admin.
+type adminOrdersResponse struct {
+	Items []adminOrderResponse `json:"items"`
+	Page  int                  `json:"page"`
+	Limit int                  `json:"limit"`
+	Total int64                `json:"total"`
+}
+
+// ListAllOrders handles GET /api/admin/orders (ADM-06).
+// Optional query parameters: status, search (order number or customer email), page and limit.
+func (h *AdminHandler) ListAllOrders(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	search := r.URL.Query().Get("search")
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.AdminService.ListAllOrders(r.Context(), status, search, page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidOrderStatus) || errors.Is(err, service.ErrInvalidOrderPage) {
+			utils.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("admin list orders: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	items := make([]adminOrderResponse, 0, len(result.Orders))
+	for _, order := range result.Orders {
+		items = append(items, newAdminOrderResponse(order))
+	}
+
+	utils.Success(w, http.StatusOK, "orders retrieved successfully", adminOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+// GetOrderForAdmin handles GET /api/admin/orders/{id} (ADM-06).
+func (h *AdminHandler) GetOrderForAdmin(w http.ResponseWriter, r *http.Request) {
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	order, err := h.AdminService.GetOrderForAdmin(r.Context(), orderID)
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			utils.Error(w, http.StatusNotFound, "order not found")
+			return
+		}
+		log.Printf("admin get order: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order retrieved successfully", newAdminOrderResponse(*order))
+}
+
+// AdminUpdateOrderStatus handles PATCH /api/admin/orders/{id}/status (ADM-07).
+// The body is {"status": "confirmed"}, or {"status": "cancelled"} to cancel.
+// The change is recorded with the admin's ID and the time.
+func (h *AdminHandler) AdminUpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Status models.OrderStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	order, err := h.AdminService.AdminUpdateOrderStatus(r.Context(), claims.UserID, orderID, req.Status)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrInvalidStatusTransition),
+			errors.Is(err, service.ErrOrderStatusFinal),
+			errors.Is(err, service.ErrOrderCannotBeCancelled):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("admin update order status: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order status updated successfully", newAdminOrderResponse(*order))
 }

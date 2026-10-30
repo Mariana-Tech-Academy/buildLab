@@ -85,15 +85,28 @@ erDiagram
     ORDER_ITEMS {
         uint id PK
         uint order_id FK
-        uint menu_item_id FK
+        uint menu_item_id FK "nullable, cleared if the menu item is deleted"
         string name "snapshot"
         int64 unit_price "snapshot"
         int quantity "> 0"
         int64 line_total
     }
+    ORDER_STATUS_CHANGES {
+        uint id PK
+        uint order_id FK
+        string from_status
+        string to_status
+        uint changed_by "admin user id"
+        timestamp created_at
+    }
 ```
+
+## Decisions
+
+- **Cancellation rule (PRD 4.8, ORD-06):** an order can be cancelled while it is Pending or Confirmed. Once it is Preparing or later, it can no longer be cancelled (409). Delivered and Cancelled are final states. Customers can cancel their own orders, managers can cancel orders for their own restaurant, and admins can cancel any order. Cancelling uses PATCH /api/orders/{id}/cancel.
+- **Order numbers (ORD-01):** every order gets a number in the format ORD-YYYYMMDD-NNN, for example ORD-20261029-001. The number goes back to 001 each day. Checkout works out the next number by finding the highest number used today and adding 1. The order_number column is unique, so if two orders try to use the same number at the same time, that insert is rolled back and checkout tries the next number, up to 5 times.
+- **Admin order status (ADM-07):** PATCH /api/admin/orders/{id}/status moves an order one step, or cancels it while it is Pending or Confirmed. Delivered and Cancelled stay final. Each successful change is stored with the admin id and the time.
 
 ## Decisions the team still needs to document
 
 - **Cart conflict rule (PRD 4.4):** reject adding an item from a different restaurant, or ask the customer to clear the cart.
-- **Cancellation rule (PRD 4.8):** which statuses allow cancellation and who may cancel.
