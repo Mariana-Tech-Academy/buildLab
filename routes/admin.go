@@ -29,4 +29,7 @@ func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	// ADM-06: admins can list, search and filter all orders, and view one order.
 	admin.HandleFunc("/orders", adminHandler.ListAllOrders).Methods(http.MethodGet)
 	admin.HandleFunc("/orders/{id}", adminHandler.GetOrderForAdmin).Methods(http.MethodGet)
+
+	// ADM-07: admins can move an order to its next status or cancel it, and each change is recorded.
+	admin.HandleFunc("/orders/{id}/status", adminHandler.AdminUpdateOrderStatus).Methods(http.MethodPatch)
 }

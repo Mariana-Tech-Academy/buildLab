@@ -170,3 +170,48 @@ func (h *AdminHandler) GetOrderForAdmin(w http.ResponseWriter, r *http.Request) 
 
 	utils.Success(w, http.StatusOK, "order retrieved successfully", newAdminOrderResponse(*order))
 }
+
+// AdminUpdateOrderStatus handles PATCH /api/admin/orders/{id}/status (ADM-07).
+// The body is {"status": "confirmed"}, or {"status": "cancelled"} to cancel.
+// The change is recorded with the admin's ID and the time.
+func (h *AdminHandler) AdminUpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Status models.OrderStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	order, err := h.AdminService.AdminUpdateOrderStatus(r.Context(), claims.UserID, orderID, req.Status)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrInvalidStatusTransition),
+			errors.Is(err, service.ErrOrderStatusFinal),
+			errors.Is(err, service.ErrOrderCannotBeCancelled):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("admin update order status: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order status updated successfully", newAdminOrderResponse(*order))
+}
