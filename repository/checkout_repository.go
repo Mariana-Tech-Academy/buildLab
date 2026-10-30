@@ -162,9 +162,10 @@ func (r *PostgresOrderRepo) CreateCheckoutOrder(ctx context.Context, input Check
 
 		for _, item := range items {
 			line := lines[item.MenuItemID]
+			menuItemID := item.MenuItemID
 			orderItem := models.OrderItem{
 				OrderID:    order.ID,
-				MenuItemID: item.MenuItemID,
+				MenuItemID: &menuItemID,
 				Name:       line.name,
 				UnitPrice:  line.price,
 				Quantity:   item.Quantity,

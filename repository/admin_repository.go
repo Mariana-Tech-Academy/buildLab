@@ -85,7 +85,7 @@ func (r *PostgresAdminRepo) GetOrderForAdmin(ctx context.Context, orderID uint) 
 
 // AdminUpdateOrderStatus changes the order's status and saves a record of the change.
 // Both happen in one transaction, so a status change is never saved without its record, or the other way round.
-// The update only works if the order is still in from Status, so if someone else changed it at the same moment,
+// The update only works if the order is still in fromStatus, so if someone else changed it at the same moment,
 // nothing is changed.
 func (r *PostgresAdminRepo) AdminUpdateOrderStatus(ctx context.Context, orderID uint, fromStatus, toStatus models.OrderStatus, adminID uint) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
