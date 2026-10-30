@@ -14,6 +14,9 @@ type AdminRepository interface {
 
 	// GetOrderForAdmin gets one order with its customer, restaurant and items.
 	GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error)
+
+	// AdminUpdateOrderStatus changes an order's status and records which admin did it, in one transaction.
+	AdminUpdateOrderStatus(ctx context.Context, orderID uint, fromStatus, toStatus models.OrderStatus, adminID uint) error
 }
 
 type PostgresAdminRepo struct {
@@ -78,4 +81,30 @@ func (r *PostgresAdminRepo) GetOrderForAdmin(ctx context.Context, orderID uint) 
 	}
 
 	return &order, nil
+}
+
+// AdminUpdateOrderStatus changes the order's status and saves a record of the change.
+// Both happen in one transaction, so a status change is never saved without its record, or the other way round.
+// The update only works if the order is still in from Status, so if someone else changed it at the same moment,
+// nothing is changed.
+func (r *PostgresAdminRepo) AdminUpdateOrderStatus(ctx context.Context, orderID uint, fromStatus, toStatus models.OrderStatus, adminID uint) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Order{}).
+			Where("id = ? AND status = ?", orderID, fromStatus).
+			Update("status", toStatus)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		change := models.OrderStatusChange{
+			OrderID:    orderID,
+			FromStatus: fromStatus,
+			ToStatus:   toStatus,
+			ChangedBy:  adminID,
+		}
+		return tx.Create(&change).Error
+	})
 }

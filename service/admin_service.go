@@ -19,6 +19,7 @@ type AdminService interface {
 	SetUserRole(ctx context.Context, targetID uint, role models.Role) (*models.User, error)
 	ListAllOrders(ctx context.Context, status, search string, page, limit int) (*AdminOrdersPage, error)
 	GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error)
+	AdminUpdateOrderStatus(ctx context.Context, adminID, orderID uint, newStatus models.OrderStatus) (*models.Order, error)
 }
 
 // AdminOrdersPage is one page of orders for the admin.
@@ -91,5 +92,56 @@ func (s *adminService) GetOrderForAdmin(ctx context.Context, orderID uint) (*mod
 		return nil, err
 	}
 
+	return order, nil
+}
+
+// AdminUpdateOrderStatus checks the status change is allowed, then changes it and records which admin did it.
+// It reuses the team's existing rules: nextOrderStatus from ORD-05 for moving forward,
+// and CanCancel from ORD-06 for cancelling.
+func (s *adminService) AdminUpdateOrderStatus(ctx context.Context, adminID, orderID uint, newStatus models.OrderStatus) (*models.Order, error) {
+	newStatus = models.OrderStatus(strings.TrimSpace(string(newStatus)))
+	if !knownOrderStatus(newStatus) {
+		return nil, ErrInvalidOrderStatus
+	}
+
+	order, err := s.adminRepo.GetOrderForAdmin(ctx, orderID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Delivered and cancelled are final, so they can't be changed.
+	if order.Status == models.OrderStatusDelivered || order.Status == models.OrderStatusCancelled {
+		return nil, ErrOrderStatusFinal
+	}
+
+	if newStatus == models.OrderStatusCancelled {
+		// Cancelling follows the team's cancellation rule (Pending or Confirmed only).
+		if !CanCancel(order.Status) {
+			return nil, ErrOrderCannotBeCancelled
+		}
+	} else {
+		// Anything else must be the next step, so no stages can be skipped.
+		expected, ok := nextOrderStatus(order.Status)
+		if !ok || newStatus != expected {
+			if ok {
+				return nil, fmt.Errorf("%w: allowed next status is %s", ErrInvalidStatusTransition, expected)
+			}
+			return nil, ErrInvalidStatusTransition
+		}
+	}
+
+	err = s.adminRepo.AdminUpdateOrderStatus(ctx, order.ID, order.Status, newStatus, adminID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Someone else changed the order just before us.
+		return nil, fmt.Errorf("%w: order status has changed, please refresh and try again", ErrInvalidStatusTransition)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	order.Status = newStatus
 	return order, nil
 }
