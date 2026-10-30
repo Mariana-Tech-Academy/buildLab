@@ -20,6 +20,16 @@ type AdminService interface {
 	ListAllOrders(ctx context.Context, status, search string, page, limit int) (*AdminOrdersPage, error)
 	GetOrderForAdmin(ctx context.Context, orderID uint) (*models.Order, error)
 	AdminUpdateOrderStatus(ctx context.Context, adminID, orderID uint, newStatus models.OrderStatus) (*models.Order, error)
+	ListUsers(ctx context.Context, search string, page, limit int) (*AdminUsersPage, error)
+	GetUserDetails(ctx context.Context, id uint) (*models.User, error)
+}
+
+// AdminUsersPage is one page of users for an admin.
+type AdminUsersPage struct {
+	Users []models.User
+	Page  int
+	Limit int
+	Total int64
 }
 
 // AdminOrdersPage is one page of orders for the admin.
@@ -144,4 +154,31 @@ func (s *adminService) AdminUpdateOrderStatus(ctx context.Context, adminID, orde
 
 	order.Status = newStatus
 	return order, nil
+}
+
+// ListUsers checks the page, then gets one page of users matching a name or email.
+func (s *adminService) ListUsers(ctx context.Context, search string, page, limit int) (*AdminUsersPage, error) {
+	search = strings.TrimSpace(search)
+	page, limit, offset, err := orderPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	users, total, err := s.adminRepo.ListUsers(ctx, search, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminUsersPage{Users: users, Page: page, Limit: limit, Total: total}, nil
+}
+
+// GetUserDetails gets one user, and returns ErrUserNotFound if that user does not exist.
+func (s *adminService) GetUserDetails(ctx context.Context, id uint) (*models.User, error) {
+	user, err := s.userRepo.GetUserByID(ctx, id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
 }

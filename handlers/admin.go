@@ -86,6 +86,66 @@ func (h *AdminHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request
 	utils.Success(w, http.StatusOK, "role updated successfully", newUserResponse(user))
 }
 
+type adminUsersResponse struct {
+	Items []UserResponse `json:"items"`
+	Page  int            `json:"page"`
+	Limit int            `json:"limit"`
+	Total int64          `json:"total"`
+}
+
+// ListUsers handles GET /api/admin/users (ADM-02).
+// Optional query parameters: search (first name, last name, or email), page and limit.
+func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.AdminService.ListUsers(r.Context(), r.URL.Query().Get("search"), page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidOrderPage) {
+			utils.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("list users: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	items := make([]UserResponse, 0, len(result.Users))
+	for i := range result.Users {
+		items = append(items, newUserResponse(&result.Users[i]))
+	}
+	utils.Success(w, http.StatusOK, "users retrieved successfully", adminUsersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+// GetUserDetails handles GET /api/admin/users/{id} (ADM-02).
+func (h *AdminHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || id == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	user, err := h.AdminService.GetUserDetails(r.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			utils.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+		log.Printf("get user details: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	utils.Success(w, http.StatusOK, "user retrieved successfully", newUserResponse(user))
+}
+
 // adminOrderResponse is one order as seen by an admin.
 // It reuses the restaurant manager's order response (customer, items, totals and delivery details)
 // and adds the customer's email and the restaurant.

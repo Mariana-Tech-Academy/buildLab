@@ -24,6 +24,10 @@ func AdminRoutes(router *mux.Router, db *gorm.DB, tokens *auth.JWTManager, black
 	admin.Use(middleware.Authenticate(tokens, blacklist), middleware.RequireRole(models.RoleAdmin))
 
 	admin.HandleFunc("/test", adminHandler.TestAdmin).Methods(http.MethodGet)
+
+	// ADM-02: admins can list and search users, and view one user.
+	admin.HandleFunc("/users", adminHandler.ListUsers).Methods(http.MethodGet)
+	admin.HandleFunc("/users/{id}", adminHandler.GetUserDetails).Methods(http.MethodGet)
 	admin.HandleFunc("/users/{id}/role", adminHandler.SetUserRoleHandler).Methods(http.MethodPatch)
 
 	// ADM-06: admins can list, search and filter all orders, and view one order.

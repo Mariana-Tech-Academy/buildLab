@@ -17,6 +17,9 @@ type AdminRepository interface {
 
 	// AdminUpdateOrderStatus changes an order's status and records which admin did it, in one transaction.
 	AdminUpdateOrderStatus(ctx context.Context, orderID uint, fromStatus, toStatus models.OrderStatus, adminID uint) error
+
+	// ListUsers gets one page of users, optionally matching a name or email.
+	ListUsers(ctx context.Context, search string, limit, offset int) ([]models.User, int64, error)
 }
 
 type PostgresAdminRepo struct {
@@ -107,4 +110,35 @@ func (r *PostgresAdminRepo) AdminUpdateOrderStatus(ctx context.Context, orderID 
 		}
 		return tx.Create(&change).Error
 	})
+}
+
+// ListUsers gets one page of users, plus the total number of matches.
+func (r *PostgresAdminRepo) ListUsers(ctx context.Context, search string, limit, offset int) ([]models.User, int64, error) {
+	var total int64
+	if err := r.adminUsersQuery(ctx, search).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var users []models.User
+	err := r.adminUsersQuery(ctx, search).
+		Order("id ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&users).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+func (r *PostgresAdminRepo) adminUsersQuery(ctx context.Context, search string) *gorm.DB {
+	query := r.db.WithContext(ctx).Model(&models.User{})
+	if search != "" {
+		pattern := likeContains(search)
+		query = query.Where(
+			"first_name ILIKE ? OR last_name ILIKE ? OR email ILIKE ?",
+			pattern, pattern, pattern,
+		)
+	}
+	return query
 }
