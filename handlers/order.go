@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"Fhub/auth"
@@ -307,4 +308,150 @@ func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.Success(w, http.StatusOK, "order retrieved successfully", newCustomerOrderResponse(order))
+}
+
+func (h *OrderHandler) ViewOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.OrderService.List(r.Context(), claims.UserID, r.URL.Query().Get("status"), page, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus), errors.Is(err, service.ErrInvalidOrderPage):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			log.Printf("list orders: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	items := make([]customerOrderResponse, 0, len(result.Orders))
+	for i := range result.Orders {
+		items = append(items, newCustomerOrderResponse(&result.Orders[i]))
+	}
+	utils.Success(w, http.StatusOK, "orders retrieved successfully", customerOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+type customerOrdersResponse struct {
+	Items []customerOrderResponse `json:"items"`
+	Page  int                     `json:"page"`
+	Limit int                     `json:"limit"`
+	Total int64                   `json:"total"`
+}
+
+// cancelOrderResponse is what we send back after an order is cancelled.
+type cancelOrderResponse struct {
+	ID          uint               `json:"id"`
+	OrderNumber string             `json:"order_number"`
+	Status      models.OrderStatus `json:"status"`
+}
+
+// CancelOrder handles PATCH /api/orders/{id}/cancel (ORD-06).
+// Customers, managers and admins can cancel, and the service checks they are allowed to.
+func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	order, err := h.OrderService.CancelOrder(r.Context(), claims.UserID, claims.Role, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrOrderCannotBeCancelled):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("cancel order: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order cancelled", cancelOrderResponse{
+		ID:          order.ID,
+		OrderNumber: order.OrderNumber,
+		Status:      order.Status,
+	})
+}
+
+type orderStatusResponse struct {
+	ID     uint               `json:"id"`
+	Status models.OrderStatus `json:"status"`
+}
+
+// UpdateOrderStatus handles PATCH /api/restaurants/{id}/orders/{orderId}/status.
+func (h *OrderHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.ClaimsFromContext(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	restaurantID, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil || restaurantID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid restaurant ID")
+		return
+	}
+	orderID, err := strconv.ParseUint(mux.Vars(r)["orderId"], 10, 64)
+	if err != nil || orderID == 0 {
+		utils.Error(w, http.StatusBadRequest, "invalid order ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Status models.OrderStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Status = models.OrderStatus(strings.TrimSpace(string(req.Status)))
+
+	err = h.OrderService.UpdateOrderStatus(r.Context(), uint(orderID), uint(restaurantID), claims.UserID, claims.Role, req.Status)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderStatus):
+			utils.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrOrderStatusForbidden):
+			utils.Error(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrRestaurantNotFound):
+			utils.Error(w, http.StatusNotFound, "restaurant not found")
+		case errors.Is(err, service.ErrOrderNotFound):
+			utils.Error(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, service.ErrInvalidStatusTransition), errors.Is(err, service.ErrOrderStatusFinal):
+			utils.Error(w, http.StatusConflict, err.Error())
+		default:
+			log.Printf("update order status: %v", err)
+			utils.Error(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order status updated successfully", orderStatusResponse{
+		ID:     uint(orderID),
+		Status: req.Status,
+	})
 }

@@ -85,3 +85,88 @@ func (h *AdminHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request
 
 	utils.Success(w, http.StatusOK, "role updated successfully", newUserResponse(user))
 }
+
+// adminOrderResponse is one order as seen by an admin.
+// It reuses the restaurant manager's order response (customer, items, totals and delivery details)
+// and adds the customer's email and the restaurant.
+type adminOrderResponse struct {
+	restaurantOrderResponse
+	CustomerEmail  string `json:"customer_email"`
+	RestaurantID   uint   `json:"restaurant_id"`
+	RestaurantName string `json:"restaurant_name"`
+}
+
+// newAdminOrderResponse builds the admin's view of an order.
+func newAdminOrderResponse(order models.Order) adminOrderResponse {
+	return adminOrderResponse{
+		restaurantOrderResponse: newRestaurantOrderResponse(order),
+		CustomerEmail:           order.Customer.Email,
+		RestaurantID:            order.RestaurantID,
+		RestaurantName:          order.Restaurant.Name,
+	}
+}
+
+// adminOrdersResponse is one page of orders for the admin.
+type adminOrdersResponse struct {
+	Items []adminOrderResponse `json:"items"`
+	Page  int                  `json:"page"`
+	Limit int                  `json:"limit"`
+	Total int64                `json:"total"`
+}
+
+// ListAllOrders handles GET /api/admin/orders (ADM-06).
+// Optional query parameters: status, search (order number or customer email), page and limit.
+func (h *AdminHandler) ListAllOrders(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	search := r.URL.Query().Get("search")
+
+	page, limit, message := restaurantListPage(r)
+	if message != "" {
+		utils.Error(w, http.StatusBadRequest, message)
+		return
+	}
+
+	result, err := h.AdminService.ListAllOrders(r.Context(), status, search, page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidOrderStatus) || errors.Is(err, service.ErrInvalidOrderPage) {
+			utils.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("admin list orders: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	items := make([]adminOrderResponse, 0, len(result.Orders))
+	for _, order := range result.Orders {
+		items = append(items, newAdminOrderResponse(order))
+	}
+
+	utils.Success(w, http.StatusOK, "orders retrieved successfully", adminOrdersResponse{
+		Items: items,
+		Page:  result.Page,
+		Limit: result.Limit,
+		Total: result.Total,
+	})
+}
+
+// GetOrderForAdmin handles GET /api/admin/orders/{id} (ADM-06).
+func (h *AdminHandler) GetOrderForAdmin(w http.ResponseWriter, r *http.Request) {
+	orderID, ok := muxID(w, r)
+	if !ok {
+		return
+	}
+
+	order, err := h.AdminService.GetOrderForAdmin(r.Context(), orderID)
+	if err != nil {
+		if errors.Is(err, service.ErrOrderNotFound) {
+			utils.Error(w, http.StatusNotFound, "order not found")
+			return
+		}
+		log.Printf("admin get order: %v", err)
+		utils.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "order retrieved successfully", newAdminOrderResponse(*order))
+}

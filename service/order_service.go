@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -38,6 +39,18 @@ var ErrInvalidOrderPage = errors.New("limit must be between 1 and 50")
 
 var ErrOrderNotFound = errors.New("order not found")
 
+// Error returned when an order has gone too far to be cancelled
+var ErrOrderCannotBeCancelled = errors.New("this order can no longer be cancelled")
+
+// Error returned when a manager does not own the restaurant whose order they are updating.
+var ErrOrderStatusForbidden = errors.New("you are not authorised to update this restaurant's orders")
+
+// Error returned when the requested status is not the next stage.
+var ErrInvalidStatusTransition = errors.New("invalid order status transition")
+
+// Error returned when a delivered or cancelled order is updated.
+var ErrOrderStatusFinal = errors.New("delivered or cancelled orders cannot be updated")
+
 // OrderService defines the business operations related to orders.
 type OrderService interface {
 
@@ -52,6 +65,21 @@ type OrderService interface {
 
 	// GetRestaurantOrders retrieves one page of orders after checking access and the requested status.
 	GetRestaurantOrders(ctx context.Context, managerID uint, role models.Role, restaurantID uint, status string, page, limit int) (*RestaurantOrdersPage, error)
+	List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error)
+
+	// CancelOrder cancels an order if the user is allowed to and the order has not gone too far.
+	CancelOrder(ctx context.Context, userID uint, role models.Role, orderID uint) (*models.Order, error)
+
+	// UpdateOrderStatus moves an order to the next status for a manager or admin.
+	UpdateOrderStatus(ctx context.Context, orderID, restaurantID, actorID uint, role models.Role, newStatus models.OrderStatus) error
+}
+
+// CustomerOrdersPage is one page of the customer's own orders.
+type CustomerOrdersPage struct {
+	Orders []models.Order
+	Page   int
+	Limit  int
+	Total  int64
 }
 
 // RestaurantOrdersPage is one page of orders for a restaurant.
@@ -142,16 +170,9 @@ func orderPageBounds(page, limit int) (int, int, int, error) {
 	return page, limit, (page - 1) * limit, nil
 }
 
-// isValidOrderStatus checks whether the requested order status exists.
-func isValidOrderStatus(status string) bool {
-
-	// An empty status means the manager wants all orders.
-	if status == "" {
-		return true
-	}
-
-	// Check the status against the allowed order statuses.
-	switch models.OrderStatus(status) {
+// knownOrderStatus reports whether status is one of the order lifecycle values.
+func knownOrderStatus(status models.OrderStatus) bool {
+	switch status {
 	case models.OrderStatusPending,
 		models.OrderStatusConfirmed,
 		models.OrderStatusPreparing,
@@ -162,6 +183,33 @@ func isValidOrderStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// isValidOrderStatus checks whether the requested order status exists.
+func isValidOrderStatus(status string) bool {
+	// An empty status means the caller wants all orders.
+	if status == "" {
+		return true
+	}
+	return knownOrderStatus(models.OrderStatus(status))
+}
+
+// nextOrderStatus is the only status that may follow current.
+func nextOrderStatus(current models.OrderStatus) (models.OrderStatus, bool) {
+	switch current {
+	case models.OrderStatusPending:
+		return models.OrderStatusConfirmed, true
+	case models.OrderStatusConfirmed:
+		return models.OrderStatusPreparing, true
+	case models.OrderStatusPreparing:
+		return models.OrderStatusReadyForDelivery, true
+	case models.OrderStatusReadyForDelivery:
+		return models.OrderStatusOutForDelivery, true
+	case models.OrderStatusOutForDelivery:
+		return models.OrderStatusDelivered, true
+	default:
+		return "", false
 	}
 }
 
@@ -254,4 +302,133 @@ func (s *orderService) ValidateDeliveryInfo(input *DeliveryInfoInput) map[string
 	}
 
 	return errs
+}
+
+func (s *orderService) List(ctx context.Context, customerID uint, status string, page, limit int) (*CustomerOrdersPage, error) {
+	status = strings.TrimSpace(status)
+	if !isValidOrderStatus(status) {
+		return nil, ErrInvalidOrderStatus
+	}
+
+	page, limit, offset, err := orderPageBounds(page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	orders, total, err := s.orderRepo.ListForCustomer(ctx, customerID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &CustomerOrdersPage{Orders: orders, Page: page, Limit: limit, Total: total}, nil
+}
+
+// cancellableStatuses lists the statuses an order can still be cancelled from.
+// Orders can be cancelled while Pending or Confirmed, but not once the restaurant starts Preparing.
+var cancellableStatuses = []models.OrderStatus{
+	models.OrderStatusPending,
+	models.OrderStatusConfirmed,
+}
+
+// CanCancel checks whether an order in this status can still be cancelled.
+func CanCancel(status models.OrderStatus) bool {
+	for _, allowed := range cancellableStatuses {
+		if status == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// canUserCancel checks whether this user is allowed to cancel this order.
+// Customers can cancel their own orders, managers can cancel orders for their
+// own restaurant, and admins can cancel any order.
+func canUserCancel(order *models.Order, userID uint, role models.Role) bool {
+	switch role {
+	case models.RoleAdmin:
+		return true
+	case models.RoleCustomer:
+		return order.CustomerID == userID
+	case models.RoleManager:
+		return order.Restaurant.ID != 0 && order.Restaurant.ManagerID == userID
+	default:
+		return false
+	}
+}
+
+// CancelOrder cancels an order after checking who is cancelling it and its current status.
+func (s *orderService) CancelOrder(ctx context.Context, userID uint, role models.Role, orderID uint) (*models.Order, error) {
+	order, err := s.orderRepo.FindOrderForCancel(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, err
+	}
+
+	// Return not found, rather than forbidden, so callers cannot tell whether someone else's order exists.
+	if !canUserCancel(order, userID, role) {
+		return nil, ErrOrderNotFound
+	}
+
+	if !CanCancel(order.Status) {
+		return nil, ErrOrderCannotBeCancelled
+	}
+
+	if err := s.orderRepo.CancelOrder(ctx, order.ID, cancellableStatuses); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// The order moved on (for example to preparing) just before we cancelled it.
+			return nil, ErrOrderCannotBeCancelled
+		}
+		return nil, err
+	}
+
+	order.Status = models.OrderStatusCancelled
+	return order, nil
+}
+
+// UpdateOrderStatus moves one restaurant order to the next stage.
+// Delivered and cancelled orders stay as they are. The update itself requires the current status,
+// so a concurrent change does not skip a stage.
+func (s *orderService) UpdateOrderStatus(ctx context.Context, orderID, restaurantID, actorID uint, role models.Role, newStatus models.OrderStatus) error {
+	newStatus = models.OrderStatus(strings.TrimSpace(string(newStatus)))
+	if !knownOrderStatus(newStatus) {
+		return ErrInvalidOrderStatus
+	}
+
+	restaurant, err := s.restaurantRepo.FindByID(ctx, restaurantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrRestaurantNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if role != models.RoleAdmin && restaurant.ManagerID != actorID {
+		return ErrOrderStatusForbidden
+	}
+
+	order, err := s.orderRepo.GetOrderForRestaurant(ctx, orderID, restaurantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrOrderNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if order.Status == models.OrderStatusDelivered || order.Status == models.OrderStatusCancelled {
+		return ErrOrderStatusFinal
+	}
+
+	expected, ok := nextOrderStatus(order.Status)
+	if !ok || newStatus != expected {
+		if ok {
+			return fmt.Errorf("%w: allowed next status is %s", ErrInvalidStatusTransition, expected)
+		}
+		return ErrInvalidStatusTransition
+	}
+
+	err = s.orderRepo.UpdateOrderStatus(ctx, orderID, restaurantID, order.Status, newStatus)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("%w: order status has changed, please refresh and try again", ErrInvalidStatusTransition)
+	}
+	return err
 }
